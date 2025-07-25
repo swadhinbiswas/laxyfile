@@ -1,0 +1,151 @@
+# LaxyFile Configuration Example
+# Copy this to ~/.config/laxyfile/config.yaml and customize
+
+# General Settings
+general:
+  startup_directory: "~" # Directory to start in (~ for home)
+  startup_panel: "left" # Which panel is active at start (left/right)
+  remember_session: true # Remember last directories and settings
+  show_hidden_files: false # Show hidden files by default
+  use_trash: true # Use trash instead of permanent delete
+  editor: "nano" # Default text editor
+
+# Theme Configuration
+theme:
+  name: "cappuccino" # Default theme (cappuccino, neon, ocean, sunset, forest)
+  use_icons: true # Show file type icons
+  use_colors: true # Enable colored file listings
+
+# UI Settings
+ui:
+  preview_pane: true # Show preview panel by default
+  max_files_display: 1000 # Maximum files to show in a directory
+  refresh_rate: 30 # Screen refresh rate (FPS)
+  panel_border_style: "rounded" # Border style (rounded, square, double)
+
+# AI Assistant Configuration (REQUIRED FOR AI FEATURES)
+ai:
+  enabled: true
+  provider: "openrouter"
+
+  # OpenRouter API Key - GET FROM https://openrouter.ai/
+  # Set this as environment variable: export OPENROUTER_API_KEY="your-key"
+  openrouter_api_key: null # Will read from OPENROUTER_API_KEY env var
+
+  model: "moonshotai/kimi-dev-72b:free" # Kimi AI model (free tier)
+  max_tokens: 4000 # Maximum response length
+  temperature: 0.7 # AI creativity (0.0-1.0)
+  timeout: 60 # Request timeout in seconds
+
+  # Content Analysis Settings
+  max_file_size_mb: 10 # Max file size to analyze content (MB)
+  enable_content_analysis: true # Read and analyze file contents
+  enable_device_monitoring: true # Monitor system devices and performance
+  cache_responses: true # Cache AI responses for performance
+
+# Keyboard Shortcuts
+hotkeys:
+  # Navigation
+  move_up: ["k", "UP"]
+  move_down: ["j", "DOWN"]
+  move_left: ["h", "LEFT"]
+  move_right: ["l", "RIGHT"]
+
+  # Panel Management
+  switch_panel: ["TAB"]
+
+  # File Operations
+  select_file: [" "] # Space bar
+  select_all: ["a"]
+  copy_files: ["c"]
+  move_files: ["m"]
+  delete_files: ["d"]
+  rename_file: ["r"]
+  new_directory: ["n"]
+
+  # Viewing
+  view_file: ["v"]
+  edit_file: ["e"]
+
+  # AI Features
+  ai_assistant: ["i"] # Open AI assistant menu
+  quick_ai_analysis: ["F9"] # Quick directory analysis
+
+  # Themes
+  cycle_theme: ["t"]
+  theme_cappuccino: ["F1"]
+  theme_neon: ["F2"]
+  theme_ocean: ["F3"]
+  theme_sunset: ["F4"]
+  theme_forest: ["F5"]
+
+  # UI
+  toggle_preview: ["p"]
+  toggle_hidden: ["."]
+
+  # System
+  help: ["?"]
+  quit: ["q", "Q"]
+
+# Performance Settings
+performance:
+  max_preview_size_mb: 50 # Max file size for preview (MB)
+  image_preview_quality: "medium" # low, medium, high
+  video_thumbnail_enabled: true
+  syntax_highlighting_enabled: true
+
+# Security Settings
+security:
+  scan_executables: true # Warn about executable files
+  check_permissions: true # Check file permissions
+  virus_scan_enabled: false # Enable virus scanning (requires additional setup)
+
+# File Type Associations
+file_associations:
+  # Code files
+  ".py": "python"
+  ".js": "javascript"
+  ".html": "html"
+  ".css": "css"
+  ".json": "json"
+
+  # Media files
+  ".jpg": "image"
+  ".png": "image"
+  ".gif": "image"
+  ".mp4": "video"
+  ".avi": "video"
+  ".mkv": "video"
+
+  # Documents
+  ".pdf": "document"
+  ".txt": "text"
+  ".md": "markdown"
+  ".docx": "document"
+
+# AI Prompts Customization (Advanced)
+ai_prompts:
+  system_analysis: |
+    Analyze the complete system including files, performance, and devices.
+    Provide actionable recommendations for optimization and security.
+
+  file_organization: |
+    Examine the file structure and suggest an intelligent organization strategy.
+    Consider file types, sizes, dates, and usage patterns.
+
+  security_audit: |
+    Perform a comprehensive security analysis of files and system.
+    Identify vulnerabilities and provide security recommendations.
+
+# Example Environment Variables Setup
+# Add these to your shell profile (~/.bashrc, ~/.zshrc, etc.):
+#
+# # LaxyFile AI Configuration
+# export OPENROUTER_API_KEY="your-openrouter-api-key-here"
+#
+# # Optional: Custom config location
+# export LAXYFILE_CONFIG_PATH="$HOME/.config/laxyfile/config.yaml"
+#
+# # Optional: Default terminal settings for optimal experience
+# export TERM="xterm-256color"
+# export COLORTERM="truecolor"

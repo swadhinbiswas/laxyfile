@@ -1,0 +1,18 @@
+# Core dependencies
+rich>=13.0.0
+pydantic>=2.0.0
+PyYAML>=6.0
+
+# Media and file handling
+Pillow>=10.0.0
+opencv-python>=4.8.0
+pygments>=2.16.0
+
+# AI and OpenRouter integration
+openai>=1.0.0
+psutil>=5.9.0
+python-magic>=0.4.27
+
+# System monitoring and utilities
+requests>=2.31.0
+aiofiles>=23.0.0
