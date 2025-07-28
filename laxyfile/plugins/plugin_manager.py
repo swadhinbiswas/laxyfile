@@ -129,6 +129,61 @@ class PluginManager:
         # Initialize
         self._load_configuration()
 
+        # Component registry for plugin access
+        self.registered_components: Dict[str, Any] = {}
+
+    async def initialize(self) -> None:
+        """Initialize the plugin manager"""
+        try:
+            self.logger.info("Initializing PluginManager")
+
+            # Discover available plugins
+            await self.discover_plugins()
+
+            self.logger.info("PluginManager initialization complete")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize PluginManager: {e}")
+            raise
+
+    def register_component(self, name: str, component: Any) -> None:
+        """Register a component for plugin access"""
+        self.registered_components[name] = component
+        self.logger.debug(f"Registered component: {name}")
+
+    def get_component(self, name: str) -> Optional[Any]:
+        """Get a registered component"""
+        return self.registered_components.get(name)
+
+    async def load_enabled_plugins(self) -> List[LoadResult]:
+        """Load all enabled plugins"""
+        results = []
+
+        # Get enabled plugin configurations
+        enabled_configs = {
+            plugin_id: config for plugin_id, config in self.plugin_configs.items()
+            if config.enabled
+        }
+
+        # Load enabled plugins
+        for plugin_id in enabled_configs:
+            # Find plugin path
+            plugin_paths = await self.discover_plugins()
+            plugin_path = None
+
+            for path in plugin_paths:
+                if path.stem == plugin_id or path.parent.name == plugin_id:
+                    plugin_path = path
+                    break
+
+            if plugin_path:
+                result = await self.load_plugin(plugin_path)
+                results.append(result)
+            else:
+                self.logger.warning(f"Plugin path not found for enabled plugin: {plugin_id}")
+
+        return results
+
     def _load_configuration(self):
         """Load plugin configuration from file"""
         try:

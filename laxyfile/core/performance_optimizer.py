@@ -1,8 +1,8 @@
 """
-Performance Optimization System
+Performance Optimizer
 
-This module provides performance optimizations for handling large directories,
-memory management, and efficient file operations.
+Advanced performance optimization system for LaxyFile with memory management,
+caching strategies, and resource monitoring.
 """
 
 import asyncio
@@ -11,195 +11,305 @@ import psutil
 import time
 import threading
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable, AsyncIterator
-from dataclasses import dataclass
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Any, Optional, List, Callable, Tuple
+from dataclasses import dataclass, field
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
+import weakref
 
-from .types import FileInfo, PerformanceMetric
+from .exceptions import PerformanceError
 from ..utils.logger import Logger
 
 
 @dataclass
 class PerformanceConfig:
-    """Performance optimization configuration"""
+    """Configuration for performance optimization"""
     max_concurrent_operations: int = 10
     chunk_size: int = 100
     memory_threshold_mb: int = 500
-    cache_cleanup_interval: int = 300  # seconds
-    lazy_loading_threshold: int = 1000  # files
+    lazy_loading_threshold: int = 1000
     background_processing: bool = True
     use_threading: bool = True
     max_worker_threads: int = 4
+    cache_ttl_seconds: int = 300
+    gc_interval_seconds: int = 60
+    memory_check_interval: int = 30
 
 
-class MemoryMonitor:
-    """Memory usage monitoring and management"""
+@dataclass
+class PerformanceMetrics:
+    """Performance metrics tracking"""
+    operation_times: Dict[str, List[float]] = field(default_factory=lambda: defaultdict(list))
+    memory_usage: List[Tuple[datetime, float]] = field(default_factory=list)
+    cache_stats: Dict[str, Any] = field(default_factory=dict)
+    thread_pool_stats: Dict[str, Any] = field(default_factory=dict)
+    gc_stats: Dict[str, Any] = field(default_factory=dict)
+    last_updated: datetime = field(default_factory=datetime.now)
 
-    def __init__(self, threshold_mb: int = 500):
-        self.threshold_mb = threshold_mb
+
+class MemoryManager:
+    """Advanced memory management system"""
+
+    def __init__(self, config: PerformanceConfig):
+        self.config = config
         self.logger = Logger()
-        self._monitoring = False
-        self._monitor_task = None
+        self._memory_threshold = config.memory_threshold_mb * 1024 * 1024  # Convert to bytes
+        self._last_gc = time.time()
+        self._memory_history = deque(maxlen=100)
+        self._weak_refs = weakref.WeakSet()
 
-    def get_memory_usage(self) -> Dict[str, float]:
-        """Get current memory usage statistics"""
+    def check_memory_usage(self) -> Dict[str, Any]:
+        """Check current memory usage"""
         try:
             process = psutil.Process()
             memory_info = process.memory_info()
+            memory_percent = process.memory_percent()
 
-            return {
-                'rss_mb': memory_info.rss / 1024 / 1024,
-                'vms_mb': memory_info.vms / 1024 / 1024,
-                'percent': process.memory_percent(),
-                'available_mb': psutil.virtual_memory().available / 1024 / 1024
+            stats = {
+                'rss': memory_info.rss,
+                'vms': memory_info.vms,
+                'percent': memory_percent,
+                'available': psutil.virtual_memory().available,
+                'threshold_exceeded': memory_info.rss > self._memory_threshold
             }
+
+            # Track memory history
+            self._memory_history.append((datetime.now(), memory_info.rss))
+
+            return stats
+
         except Exception as e:
-            self.logger.error(f"Error getting memory usage: {e}")
+            self.logger.error(f"Error checking memory usage: {e}")
             return {}
 
-    def is_memory_pressure(self) -> bool:
-        """Check if system is under memory pressure"""
-        try:
-            memory_usage = self.get_memory_usage()
-            return memory_usage.get('rss_mb', 0) > self.threshold_mb
-        except Exception:
-            return False
+    def optimize_memory(self) -> Dict[str, Any]:
+        """Perform memory optimization"""
+        start_time = time.time()
+        initial_memory = self.check_memory_usage().get('rss', 0)
 
-    def force_garbage_collection(self) -> int:
-        """Force garbage collection and return collected objects"""
         try:
+            # Force garbage collection
             collected = gc.collect()
-            self.logger.debug(f"Garbage collection freed {collected} objects")
-            return collected
-        except Exception as e:
-            self.logger.error(f"Error during garbage collection: {e}")
-            return 0
 
-    async def start_monitoring(self, callback: Optional[Callable] = None):
-        """Start memory monitoring in background"""
-        if self._monitoring:
-            return
+            # Clear weak references if needed
+            if len(self._weak_refs) > 1000:
+                self._weak_refs.clear()
 
-        self._monitoring = True
-        self._monitor_task = asyncio.create_task(self._monitor_loop(callback))
+            # Update last GC time
+            self._last_gc = time.time()
 
-    async def stop_monitoring(self):
-        """Stop memory monitoring"""
-        self._monitoring = False
-        if self._monitor_task:
-            self._monitor_task.cancel()
-            try:
-                await self._monitor_task
-            except asyncio.CancelledError:
-                pass
+            final_memory = self.check_memory_usage().get('rss', 0)
+            memory_freed = initial_memory - final_memory
 
-    async def _monitor_loop(self, callback: Optional[Callable] = None):
-        """Memory monitoring loop"""
-        while self._monitoring:
-            try:
-                if self.is_memory_pressure():
-                    self.logger.warning("Memory pressure detected, triggering cleanup")
-                    self.force_garbage_collection()
+            stats = {
+                'objects_collected': collected,
+                'memory_freed_bytes': memory_freed,
+                'memory_freed_mb': memory_freed / (1024 * 1024),
+                'optimization_time': time.time() - start_time,
+                'gc_counts': gc.get_count()
+            }
 
-                    if callback:
-                        await callback()
+            if memory_freed > 0:
+                self.logger.info(f"Memory optimization freed {memory_freed / (1024 * 1024):.2f} MB")
 
-                await asyncio.sleep(10)  # Check every 10 seconds
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self.logger.error(f"Error in memory monitoring loop: {e}")
-                await asyncio.sleep(10)
-
-
-class LazyLoader:
-    """Lazy loading system for large directories"""
-
-    def __init__(self, chunk_size: int = 100):
-        self.chunk_size = chunk_size
-        self.logger = Logger()
-
-    async def load_directory_chunks(self, path: Path,
-                                  file_processor: Callable,
-                                  show_hidden: bool = False) -> AsyncIterator[List[Any]]:
-        """Load directory contents in chunks"""
-        try:
-            items = []
-
-            # Collect all items first
-            for item in path.iterdir():
-                if not show_hidden and item.name.startswith('.'):
-                    continue
-                items.append(item)
-
-            # Process in chunks
-            for i in range(0, len(items), self.chunk_size):
-                chunk = items[i:i + self.chunk_size]
-
-                # Process chunk concurrently
-                tasks = [file_processor(item) for item in chunk]
-                processed_chunk = await asyncio.gather(*tasks, return_exceptions=True)
-
-                # Filter out exceptions
-                valid_items = [item for item in processed_chunk if not isinstance(item, Exception)]
-
-                yield valid_items
-
-                # Allow other tasks to run
-                await asyncio.sleep(0)
+            return stats
 
         except Exception as e:
-            self.logger.error(f"Error in lazy loading for {path}: {e}")
+            self.logger.error(f"Error during memory optimization: {e}")
+            return {}
 
+    def should_optimize_memory(self) -> bool:
+        """Check if memory optimization should be performed"""
+        current_time = time.time()
+        memory_stats = self.check_memory_usage()
 
-class BackgroundProcessor:
-    """Background processing for non-critical operations"""
-
-    def __init__(self, max_workers: int = 4):
-        self.max_workers = max_workers
-        self.logger = Logger()
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._tasks = deque()
-        self._processing = False
-
-    def submit_task(self, func: Callable, *args, **kwargs) -> asyncio.Future:
-        """Submit a task for background processing"""
-        future = asyncio.get_event_loop().run_in_executor(
-            self._executor, func, *args, **kwargs
+        # Optimize if threshold exceeded or GC interval passed
+        return (
+            memory_stats.get('threshold_exceeded', False) or
+            (current_time - self._last_gc) > self.config.gc_interval_seconds
         )
-        self._tasks.append(future)
+
+    def register_weak_ref(self, obj) -> None:
+        """Register object for weak reference tracking"""
+        try:
+            self._weak_refs.add(obj)
+        except TypeError:
+            # Object doesn't support weak references
+            pass
+
+    def get_memory_trend(self) -> Dict[str, Any]:
+        """Get memory usage trend analysis"""
+        if len(self._memory_history) < 2:
+            return {}
+
+        try:
+            recent_usage = [usage for _, usage in self._memory_history[-10:]]
+            avg_usage = sum(recent_usage) / len(recent_usage)
+
+            # Calculate trend
+            if len(recent_usage) >= 2:
+                trend = (recent_usage[-1] - recent_usage[0]) / len(recent_usage)
+            else:
+                trend = 0
+
+            return {
+                'average_usage_mb': avg_usage / (1024 * 1024),
+                'current_usage_mb': recent_usage[-1] / (1024 * 1024),
+                'trend_mb_per_sample': trend / (1024 * 1024),
+                'samples_count': len(self._memory_history),
+                'is_increasing': trend > 0
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error calculating memory trend: {e}")
+            return {}
+
+
+class CacheOptimizer:
+    """Advanced caching optimization system"""
+
+    def __init__(self, config: PerformanceConfig):
+        self.config = config
+        self.logger = Logger()
+        self._cache_stats = defaultdict(lambda: {
+            'hits': 0,
+            'misses': 0,
+            'size': 0,
+            'last_cleanup': time.time()
+        })
+
+    def optimize_cache(self, cache_name: str, cache_dict: Dict) -> Dict[str, Any]:
+        """Optimize a specific cache"""
+        start_time = time.time()
+        initial_size = len(cache_dict)
+
+        try:
+            # Remove expired entries
+            current_time = time.time()
+            expired_keys = []
+
+            for key, value in cache_dict.items():
+                if isinstance(value, tuple) and len(value) >= 2:
+                    # Assume (data, timestamp) format
+                    _, timestamp = value[:2]
+                    if isinstance(timestamp, datetime):
+                        age = (datetime.now() - timestamp).total_seconds()
+                        if age > self.config.cache_ttl_seconds:
+                            expired_keys.append(key)
+
+            # Remove expired keys
+            for key in expired_keys:
+                del cache_dict[key]
+
+            # Update stats
+            stats = self._cache_stats[cache_name]
+            stats['size'] = len(cache_dict)
+            stats['last_cleanup'] = current_time
+
+            optimization_stats = {
+                'cache_name': cache_name,
+                'initial_size': initial_size,
+                'final_size': len(cache_dict),
+                'expired_entries': len(expired_keys),
+                'optimization_time': time.time() - start_time,
+                'hit_rate': self._calculate_hit_rate(cache_name)
+            }
+
+            if expired_keys:
+                self.logger.debug(f"Cache {cache_name}: removed {len(expired_keys)} expired entries")
+
+            return optimization_stats
+
+        except Exception as e:
+            self.logger.error(f"Error optimizing cache {cache_name}: {e}")
+            return {}
+
+    def record_cache_hit(self, cache_name: str) -> None:
+        """Record a cache hit"""
+        self._cache_stats[cache_name]['hits'] += 1
+
+    def record_cache_miss(self, cache_name: str) -> None:
+        """Record a cache miss"""
+        self._cache_stats[cache_name]['misses'] += 1
+
+    def _calculate_hit_rate(self, cache_name: str) -> float:
+        """Calculate cache hit rate"""
+        stats = self._cache_stats[cache_name]
+        total = stats['hits'] + stats['misses']
+        return stats['hits'] / total if total > 0 else 0.0
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get comprehensive cache statistics"""
+        return dict(self._cache_stats)
+
+
+class ThreadPoolOptimizer:
+    """Thread pool optimization and management"""
+
+    def __init__(self, config: PerformanceConfig):
+        self.config = config
+        self.logger = Logger()
+        self._thread_pools = {}
+        self._pool_stats = defaultdict(lambda: {
+            'tasks_submitted': 0,
+            'tasks_completed': 0,
+            'active_threads': 0,
+            'queue_size': 0
+        })
+
+    def get_optimized_thread_pool(self, pool_name: str, max_workers: Optional[int] = None):
+        """Get or create an optimized thread pool"""
+        if pool_name not in self._thread_pools:
+            from concurrent.futures import ThreadPoolExecutor
+
+            workers = max_workers or self.config.max_worker_threads
+            self._thread_pools[pool_name] = ThreadPoolExecutor(
+                max_workers=workers,
+                thread_name_prefix=f"laxyfile-{pool_name}"
+            )
+
+        return self._thread_pools[pool_name]
+
+    def submit_task(self, pool_name: str, func: Callable, *args, **kwargs):
+        """Submit task to optimized thread pool"""
+        pool = self.get_optimized_thread_pool(pool_name)
+        self._pool_stats[pool_name]['tasks_submitted'] += 1
+
+        future = pool.submit(func, *args, **kwargs)
+
+        # Add completion callback
+        def on_complete(fut):
+            self._pool_stats[pool_name]['tasks_completed'] += 1
+
+        future.add_done_callback(on_complete)
         return future
 
-    async def process_pending_tasks(self, max_concurrent: int = 10):
-        """Process pending tasks with concurrency limit"""
-        if self._processing:
-            return
+    def get_pool_stats(self) -> Dict[str, Any]:
+        """Get thread pool statistics"""
+        stats = {}
+        for pool_name, pool in self._thread_pools.items():
+            pool_stats = self._pool_stats[pool_name].copy()
 
-        self._processing = True
+            # Add runtime stats if available
+            if hasattr(pool, '_threads'):
+                pool_stats['active_threads'] = len(pool._threads)
+            if hasattr(pool, '_work_queue'):
+                pool_stats['queue_size'] = pool._work_queue.qsize()
 
-        try:
-            while self._tasks:
-                # Process up to max_concurrent tasks at once
-                current_batch = []
-                for _ in range(min(max_concurrent, len(self._tasks))):
-                    if self._tasks:
-                        current_batch.append(self._tasks.popleft())
+            stats[pool_name] = pool_stats
 
-                if current_batch:
-                    # Wait for batch completion
-                    await asyncio.gather(*current_batch, return_exceptions=True)
+        return stats
 
-                # Allow other tasks to run
-                await asyncio.sleep(0.01)
+    def shutdown_pools(self, wait: bool = True) -> None:
+        """Shutdown all thread pools"""
+        for pool_name, pool in self._thread_pools.items():
+            try:
+                pool.shutdown(wait=wait)
+                self.logger.debug(f"Shutdown thread pool: {pool_name}")
+            except Exception as e:
+                self.logger.error(f"Error shutting down pool {pool_name}: {e}")
 
-        finally:
-            self._processing = False
-
-    def shutdown(self):
-        """Shutdown the background processor"""
-        self._executor.shutdown(wait=True)
+        self._thread_pools.clear()
 
 
 class PerformanceOptimizer:
@@ -209,198 +319,203 @@ class PerformanceOptimizer:
         self.config = config
         self.logger = Logger()
 
-        # Initialize components
-        self.memory_monitor = MemoryMonitor(config.memory_threshold_mb)
-        self.lazy_loader = LazyLoader(config.chunk_size)
-        self.background_processor = BackgroundProcessor(config.max_worker_threads)
+        # Initialize sub-optimizers
+        self.memory_manager = MemoryManager(config)
+        self.cache_optimizer = CacheOptimizer(config)
+        self.thread_optimizer = ThreadPoolOptimizer(config)
 
         # Performance metrics
-        self.metrics = {}
-        self._start_time = time.time()
+        self.metrics = PerformanceMetrics()
 
-    async def optimize_directory_loading(self, path: Path,
-                                       file_processor: Callable,
-                                       show_hidden: bool = False) -> List[Any]:
-        """Optimize directory loading based on size and system resources"""
-        start_time = time.time()
+        # Background optimization
+        self._optimization_task = None
+        self._running = False
 
+    async def initialize(self) -> None:
+        """Initialize the performance optimizer"""
         try:
-            # Quick count of items
-            item_count = sum(1 for _ in path.iterdir())
+            self.logger.info("Initializing PerformanceOptimizer")
 
-            # Decide on loading strategy
-            if item_count > self.config.lazy_loading_threshold:
-                self.logger.info(f"Using lazy loading for {item_count} items in {path}")
-                return await self._lazy_load_directory(path, file_processor, show_hidden)
-            else:
-                self.logger.debug(f"Using standard loading for {item_count} items in {path}")
-                return await self._standard_load_directory(path, file_processor, show_hidden)
-
-        finally:
-            # Record performance metric
-            duration = time.time() - start_time
-            self._record_metric('directory_loading', duration, {'item_count': item_count})
-
-    async def _lazy_load_directory(self, path: Path,
-                                 file_processor: Callable,
-                                 show_hidden: bool = False) -> List[Any]:
-        """Load directory using lazy loading strategy"""
-        all_items = []
-
-        async for chunk in self.lazy_loader.load_directory_chunks(path, file_processor, show_hidden):
-            all_items.extend(chunk)
-
-            # Check memory pressure
-            if self.memory_monitor.is_memory_pressure():
-                self.logger.warning("Memory pressure during lazy loading, triggering cleanup")
-                self.memory_monitor.force_garbage_collection()
-                await asyncio.sleep(0.1)  # Brief pause to allow cleanup
-
-        return all_items
-
-    async def _standard_load_directory(self, path: Path,
-                                     file_processor: Callable,
-                                     show_hidden: bool = False) -> List[Any]:
-        """Load directory using standard strategy with concurrency"""
-        items = []
-
-        # Collect items
-        for item in path.iterdir():
-            if not show_hidden and item.name.startswith('.'):
-                continue
-            items.append(item)
-
-        # Process with controlled concurrency
-        semaphore = asyncio.Semaphore(self.config.max_concurrent_operations)
-
-        async def process_with_semaphore(item):
-            async with semaphore:
-                return await file_processor(item)
-
-        # Process all items concurrently
-        tasks = [process_with_semaphore(item) for item in items]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Filter out exceptions
-        return [result for result in results if not isinstance(result, Exception)]
-
-    def optimize_memory_usage(self, cache_objects: List[Any]):
-        """Optimize memory usage by cleaning up caches"""
-        if not self.memory_monitor.is_memory_pressure():
-            return
-
-        self.logger.info("Optimizing memory usage")
-
-        # Clear caches if under memory pressure
-        for cache_obj in cache_objects:
-            if hasattr(cache_obj, 'clear'):
-                cache_obj.clear()
-            elif hasattr(cache_obj, 'cache') and hasattr(cache_obj.cache, 'clear'):
-                cache_obj.cache.clear()
-
-        # Force garbage collection
-        self.memory_monitor.force_garbage_collection()
-
-    async def optimize_file_operations(self, operations: List[Callable]) -> List[Any]:
-        """Optimize batch file operations"""
-        if not operations:
-            return []
-
-        start_time = time.time()
-
-        try:
-            # Use background processing for non-critical operations
             if self.config.background_processing:
-                futures = []
-                for operation in operations:
-                    future = self.background_processor.submit_task(operation)
-                    futures.append(future)
+                await self.start_background_optimization()
 
-                # Wait for completion with timeout
-                results = await asyncio.gather(*futures, return_exceptions=True)
-                return [r for r in results if not isinstance(r, Exception)]
-            else:
-                # Process sequentially
-                results = []
-                for operation in operations:
-                    try:
-                        result = await operation() if asyncio.iscoroutinefunction(operation) else operation()
-                        results.append(result)
-                    except Exception as e:
-                        self.logger.error(f"Error in file operation: {e}")
+            self.logger.info("PerformanceOptimizer initialization complete")
 
-                return results
+        except Exception as e:
+            self.logger.error(f"Failed to initialize PerformanceOptimizer: {e}")
+            raise
 
-        finally:
-            duration = time.time() - start_time
-            self._record_metric('file_operations', duration, {'operation_count': len(operations)})
+    async def start_background_optimization(self) -> None:
+        """Start background optimization task"""
+        if self._optimization_task is None or self._optimization_task.done():
+            self._running = True
+            self._optimization_task = asyncio.create_task(self._background_optimization_loop())
+            self.logger.info("Started background optimization")
 
-    def _record_metric(self, operation: str, duration: float, metadata: Dict[str, Any] = None):
-        """Record performance metric"""
-        if operation not in self.metrics:
-            self.metrics[operation] = []
+    async def stop_background_optimization(self) -> None:
+        """Stop background optimization task"""
+        self._running = False
+        if self._optimization_task and not self._optimization_task.done():
+            self._optimization_task.cancel()
+            try:
+                await self._optimization_task
+            except asyncio.CancelledError:
+                pass
+            self.logger.info("Stopped background optimization")
 
-        metric = PerformanceMetric(
-            operation=operation,
-            duration=duration,
-            memory_used=self.memory_monitor.get_memory_usage().get('rss_mb', 0),
-            cpu_percent=psutil.cpu_percent()
-        )
+    async def _background_optimization_loop(self) -> None:
+        """Background optimization loop"""
+        while self._running:
+            try:
+                # Memory optimization
+                if self.memory_manager.should_optimize_memory():
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, self.memory_manager.optimize_memory
+                    )
 
-        self.metrics[operation].append(metric)
+                # Update metrics
+                await self._update_metrics()
 
-        # Keep only recent metrics (last 100)
-        if len(self.metrics[operation]) > 100:
-            self.metrics[operation] = self.metrics[operation][-100:]
+                # Sleep before next optimization cycle
+                await asyncio.sleep(self.config.memory_check_interval)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"Error in background optimization: {e}")
+                await asyncio.sleep(5)  # Brief pause on error
+
+    async def _update_metrics(self) -> None:
+        """Update performance metrics"""
+        try:
+            # Memory metrics
+            memory_stats = self.memory_manager.check_memory_usage()
+            if memory_stats:
+                self.metrics.memory_usage.append((
+                    datetime.now(),
+                    memory_stats.get('rss', 0) / (1024 * 1024)  # Convert to MB
+                ))
+
+            # Cache metrics
+            self.metrics.cache_stats = self.cache_optimizer.get_cache_stats()
+
+            # Thread pool metrics
+            self.metrics.thread_pool_stats = self.thread_optimizer.get_pool_stats()
+
+            # Memory trend
+            memory_trend = self.memory_manager.get_memory_trend()
+            if memory_trend:
+                self.metrics.cache_stats['memory_trend'] = memory_trend
+
+            self.metrics.last_updated = datetime.now()
+
+        except Exception as e:
+            self.logger.error(f"Error updating metrics: {e}")
+
+    def record_operation_time(self, operation: str, duration: float) -> None:
+        """Record operation timing"""
+        self.metrics.operation_times[operation].append(duration)
+
+        # Keep only recent measurements
+        if len(self.metrics.operation_times[operation]) > 100:
+            self.metrics.operation_times[operation] = self.metrics.operation_times[operation][-50:]
 
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get comprehensive performance statistics"""
-        stats = {
-            'uptime': time.time() - self._start_time,
-            'memory_usage': self.memory_monitor.get_memory_usage(),
-            'operations': {}
-        }
+        try:
+            stats = {
+                'memory': self.memory_manager.check_memory_usage(),
+                'memory_trend': self.memory_manager.get_memory_trend(),
+                'cache': self.cache_optimizer.get_cache_stats(),
+                'thread_pools': self.thread_optimizer.get_pool_stats(),
+                'operation_times': self._calculate_operation_stats(),
+                'last_updated': self.metrics.last_updated.isoformat()
+            }
 
-        for operation, metrics in self.metrics.items():
-            if metrics:
-                durations = [m.duration for m in metrics]
-                stats['operations'][operation] = {
-                    'count': len(metrics),
-                    'avg_duration': sum(durations) / len(durations),
-                    'min_duration': min(durations),
-                    'max_duration': max(durations),
-                    'total_duration': sum(durations)
+            return stats
+
+        except Exception as e:
+            self.logger.error(f"Error getting performance stats: {e}")
+            return {}
+
+    def _calculate_operation_stats(self) -> Dict[str, Any]:
+        """Calculate operation timing statistics"""
+        stats = {}
+
+        for operation, times in self.metrics.operation_times.items():
+            if times:
+                stats[operation] = {
+                    'count': len(times),
+                    'avg_time': sum(times) / len(times),
+                    'min_time': min(times),
+                    'max_time': max(times),
+                    'total_time': sum(times),
+                    'recent_avg': sum(times[-10:]) / min(len(times), 10)
                 }
 
         return stats
 
-    async def start_background_monitoring(self):
-        """Start background performance monitoring"""
-        await self.memory_monitor.start_monitoring(
-            callback=lambda: self.optimize_memory_usage([])
-        )
+    async def optimize_for_large_directory(self, file_count: int) -> Dict[str, Any]:
+        """Optimize performance for large directory operations"""
+        try:
+            optimizations = []
 
-    async def stop_background_monitoring(self):
-        """Stop background performance monitoring"""
-        await self.memory_monitor.stop_monitoring()
-        self.background_processor.shutdown()
+            # Adjust chunk size based on file count
+            if file_count > 10000:
+                chunk_size = min(50, self.config.chunk_size)
+                optimizations.append(f"Reduced chunk size to {chunk_size}")
+            elif file_count > 1000:
+                chunk_size = min(100, self.config.chunk_size)
+                optimizations.append(f"Adjusted chunk size to {chunk_size}")
 
-    def suggest_optimizations(self) -> List[str]:
-        """Suggest performance optimizations based on metrics"""
-        suggestions = []
+            # Trigger memory optimization
+            if file_count > 5000:
+                memory_stats = await asyncio.get_event_loop().run_in_executor(
+                    None, self.memory_manager.optimize_memory
+                )
+                optimizations.append("Performed memory optimization")
 
-        memory_usage = self.memory_monitor.get_memory_usage()
-        if memory_usage.get('rss_mb', 0) > self.config.memory_threshold_mb:
-            suggestions.append("Consider increasing memory threshold or reducing cache sizes")
+            # Suggest UI optimizations
+            ui_optimizations = []
+            if file_count > 1000:
+                ui_optimizations.append("Enable lazy loading")
+            if file_count > 5000:
+                ui_optimizations.append("Reduce preview updates")
+            if file_count > 10000:
+                ui_optimizations.append("Disable animations")
 
-        # Analyze operation performance
-        for operation, metrics in self.metrics.items():
-            if metrics:
-                avg_duration = sum(m.duration for m in metrics) / len(metrics)
-                if avg_duration > 1.0:  # Operations taking more than 1 second
-                    suggestions.append(f"Operation '{operation}' is slow (avg: {avg_duration:.2f}s), consider optimization")
+            return {
+                'file_count': file_count,
+                'optimizations_applied': optimizations,
+                'ui_suggestions': ui_optimizations,
+                'recommended_chunk_size': chunk_size if 'chunk_size' in locals() else self.config.chunk_size
+            }
 
-        if not suggestions:
-            suggestions.append("Performance is optimal")
+        except Exception as e:
+            self.logger.error(f"Error optimizing for large directory: {e}")
+            return {}
 
-        return suggestions
+    def optimize_cache(self, cache_name: str, cache_dict: Dict) -> Dict[str, Any]:
+        """Optimize a specific cache"""
+        return self.cache_optimizer.optimize_cache(cache_name, cache_dict)
+
+    def submit_background_task(self, pool_name: str, func: Callable, *args, **kwargs):
+        """Submit task to background thread pool"""
+        return self.thread_optimizer.submit_task(pool_name, func, *args, **kwargs)
+
+    async def shutdown(self) -> None:
+        """Shutdown the performance optimizer"""
+        try:
+            await self.stop_background_optimization()
+            self.thread_optimizer.shutdown_pools()
+            self.logger.info("PerformanceOptimizer shutdown complete")
+        except Exception as e:
+            self.logger.error(f"Error during shutdown: {e}")
+
+    def __del__(self):
+        """Cleanup on deletion"""
+        try:
+            if hasattr(self, 'thread_optimizer'):
+                self.thread_optimizer.shutdown_pools(wait=False)
+        except:
+            pass

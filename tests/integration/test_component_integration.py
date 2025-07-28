@@ -436,3 +436,313 @@ async def test_integration_with_real_components():
 if __name__ == "__main__":
     # Run tests directly
     pytest.main([__file__, "-v"])
+
+        # Test concurrent file analysis and preview generation
+        tasks = []
+        for file_path in list(sample_files.values())[:3]:  # Test with first 3 files
+            if file_path.is_file():
+                tasks.append(integrator.get_file_preview(file_path))
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Check that operations completed successfully
+            successful_results = [r for r in results if not isinstance(r, Exception)]
+            assert len(successful_results) > 0
+
+    @pytest.mark.asyncio
+    async def test_memory_management_integration(self, test_config, large_directory):
+        """Test memory management across integrated components."""
+        integrator = ComponentIntegrator(test_config)
+        await integrator.initialize()
+
+        # Process large directory to test memory management
+        await integrator.display_directory(large_directory)
+
+        # Check memory usage stats
+        stats = integrator.get_performance_stats()
+        assert isinstance(stats, dict)
+
+        # Cleanup should be performed automatically
+        await integrator.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_plugin_integration(self, test_config):
+        """Test plugin system integration with other components."""
+        integrator = ComponentIntegrator(test_config)
+        await integrator.initialize()
+
+        # Mock plugin registration
+        mock_plugin = Mock()
+        mock_plugin.name = "test_plugin"
+        mock_plugin.version = "1.0.0"
+
+        # Test plugin integration
+        integrator.register_plugin(mock_plugin)
+
+        plugins = integrator.get_loaded_plugins()
+        assert len(plugins) > 0
+
+    @pytest.mark.asyncio
+    async def test_theme_integration_across_components(self, test_config):
+        """Test theme system integration across all components."""
+        integrator = ComponentIntegrator(test_config)
+        await integrator.initialize()
+
+        # Change theme
+        await integrator.change_theme('dark')
+
+        # Verify theme was applied to all components
+        current_theme = integrator.get_current_theme()
+        assert current_theme['name'] == 'dark'
+
+    @pytest.mark.asyncio
+    async def test_configuration_validation_integration(self, test_config):
+        """Test configuration validation across integrated components."""
+        integrator = ComponentIntegrator(test_config)
+        await integrator.initialize()
+
+        # Test invalid configuration
+        test_config.set('invalid.setting', 'invalid_value')
+
+        validation_errors = await integrator.validate_configuration()
+        assert isinstance(validation_errors, list)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cleanup_integration(self, test_config):
+        """Test proper cleanup during shutdown."""
+        integrator = ComponentIntegrator(test_config)
+        await integrator.initialize()
+
+        # Perform some operations
+        await integrator.get_performance_stats()
+
+        # Test shutdown
+        await integrator.shutdown()
+
+        # Verify cleanup was performed
+        assert integrator._shutdown_complete is True
+
+
+@pytest.mark.integration
+class TestAIFileManagerIntegration:
+    """Test cases for AI and file manager integration."""
+
+    @pytest.mark.asyncio
+    async def test_ai_file_analysis_integration(self, test_config, sample_files, mock_ai_assistant):
+        """Test AI analysis integration with file manager."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        # Mock AI assistant
+        with patch('laxyfile.ai.advanced_assistant.AdvancedAIAssistant', return_value=mock_ai_assistant):
+            # Test AI analysis of file
+            file_path = sample_files['text1']
+
+            # Get file info through file manager
+            file_info = await file_manager.get_file_info(file_path)
+
+            # Analyze with AI
+            analysis = mock_ai_assistant.analyze_file(file_path)
+
+            assert analysis['file_type'] == 'text'
+            assert file_info.file_type == 'text'
+
+    @pytest.mark.asyncio
+    async def test_ai_organization_suggestions(self, test_config, sample_files, mock_ai_assistant):
+        """Test AI organization suggestions integration."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        directory = sample_files['text1'].parent
+
+        # Get directory listing
+        files = await file_manager.list_directory(directory)
+
+        # Get AI organization suggestions
+        suggestions = mock_ai_assistant.suggest_organization([f.path for f in files])
+
+        assert suggestions['confidence'] > 0
+        assert 'suggested_structure' in suggestions
+
+
+@pytest.mark.integration
+class TestUIIntegration:
+    """Test cases for UI integration with other components."""
+
+    @pytest.mark.asyncio
+    async def test_ui_file_manager_integration(self, test_config, sample_files, mock_console):
+        """Test UI integration with file manager."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        ui = SuperFileUI(test_config)
+        ui.console = mock_console
+
+        # Test displaying directory through UI
+        directory = sample_files['text1'].parent
+        files = await file_manager.list_directory(directory)
+
+        ui.display_files(files)
+
+        # Verify UI was called
+        assert mock_console.print.called
+
+    @pytest.mark.asyncio
+    async def test_ui_theme_integration(self, test_config, mock_console):
+        """Test UI theme integration."""
+        ui = SuperFileUI(test_config)
+        ui.console = mock_console
+
+        # Test theme application
+        ui.apply_theme('dark')
+
+        # Verify theme was applied
+        assert ui.current_theme == 'dark'
+
+    @pytest.mark.asyncio
+    async def test_ui_keyboard_integration(self, test_config):
+        """Test UI keyboard handling integration."""
+        ui = SuperFileUI(test_config)
+
+        # Test keyboard input handling
+        result = ui.handle_key_input('j')  # Down arrow equivalent
+
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_ui_preview_integration(self, test_config, sample_files):
+        """Test UI preview integration."""
+        ui = SuperFileUI(test_config)
+
+        # Test file preview display
+        file_path = sample_files['text1']
+        preview_content = ui.get_file_preview(file_path)
+
+        assert preview_content is not None
+        assert len(preview_content) > 0
+
+
+@pytest.mark.integration
+class TestPreviewSystemIntegration:
+    """Test cases for preview system integration."""
+
+    @pytest.mark.asyncio
+    async def test_preview_file_manager_integration(self, test_config, sample_files):
+        """Test preview system integration with file manager."""
+        from laxyfile.preview.preview_system import PreviewSystem
+
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        preview_system = PreviewSystem(test_config)
+
+        # Test preview generation for different file types
+        for file_type, file_path in sample_files.items():
+            if file_path.is_file():
+                file_info = await file_manager.get_file_info(file_path)
+                preview = preview_system.generate_preview(file_info)
+
+                assert preview is not None
+
+    @pytest.mark.asyncio
+    async def test_preview_caching_integration(self, test_config, sample_files):
+        """Test preview caching integration."""
+        from laxyfile.preview.preview_system import PreviewSystem
+
+        preview_system = PreviewSystem(test_config)
+
+        file_path = sample_files['text1']
+
+        # First preview generation
+        preview1 = preview_system.generate_preview_from_path(file_path)
+
+        # Second preview generation (should use cache)
+        preview2 = preview_system.generate_preview_from_path(file_path)
+
+        assert preview1 == preview2
+
+        # Check cache stats
+        cache_stats = preview_system.get_cache_stats()
+        assert cache_stats['hits'] > 0
+
+
+@pytest.mark.integration
+class TestPerformanceIntegration:
+    """Test cases for performance integration across components."""
+
+    @pytest.mark.asyncio
+    async def test_large_directory_performance_integration(self, test_config, large_directory):
+        """Test performance with large directories across components."""
+        integrator = ComponentIntegrator(test_config)
+        await integrator.initialize()
+
+        import time
+        start_time = time.time()
+
+        # Process large directory
+        await integrator.display_directory(large_directory)
+
+        end_time = time.time()
+        processing_time = end_time - start_time
+
+        # Should complete within reasonable time
+        assert processing_time < 10.0  # 10 seconds max
+
+        # Check performance stats
+        stats = integrator.get_performance_stats()
+        assert isinstance(stats, dict)
+
+    @pytest.mark.asyncio
+    async def test_memory_usage_integration(self, test_config, large_directory):
+        """Test memory usage across integrated components."""
+        import psutil
+        import os
+
+        process = psutil.Process(os.getpid())
+        initial_memory = process.memory_info().rss
+
+        integrator = ComponentIntegrator(test_config)
+        await integrator.initialize()
+
+        # Process large directory
+        await integrator.display_directory(large_directory)
+
+        peak_memory = process.memory_info().rss
+        memory_increase = peak_memory - initial_memory
+
+        # Memory increase should be reasonable (less than 100MB)
+        assert memory_increase < 100 * 1024 * 1024
+
+        # Cleanup
+        await integrator.cleanup()
+
+        final_memory = process.memory_info().rss
+        # Memory should be released after cleanup
+        assert final_memory < peak_memory
+
+    @pytest.mark.asyncio
+    async def test_concurrent_operations_performance(self, test_config, sample_files):
+        """Test performance of concurrent operations."""
+        integrator = ComponentIntegrator(test_config)
+        await integrator.initialize()
+
+        import time
+        start_time = time.time()
+
+        # Run multiple concurrent operations
+        tasks = []
+        for i in range(10):
+            if i < len(sample_files):
+                file_path = list(sample_files.values())[i]
+                if file_path.is_file():
+                    tasks.append(integrator.get_file_preview(file_path))
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        end_time = time.time()
+        total_time = end_time - start_time
+
+        # Concurrent operations should be faster than sequential
+        assert total_time < 5.0  # Should complete within 5 seconds

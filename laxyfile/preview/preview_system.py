@@ -178,6 +178,20 @@ class PreviewCache:
         self.cache.clear()
         self.access_order.clear()
 
+    def clear_expired(self):
+        """Clear expired cache entries"""
+        current_time = datetime.now()
+        expired_keys = []
+
+        for cache_key, result in self.cache.items():
+            if result.expires_at and current_time > result.expires_at:
+                expired_keys.append(cache_key)
+
+        for key in expired_keys:
+            self._remove(key)
+
+        self.logger.debug(f"Cleared {len(expired_keys)} expired cache entries")
+
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
         expired_count = sum(
@@ -390,6 +404,24 @@ class AdvancedPreviewSystem:
             'errors': 0,
             'total_generation_time': 0.0
         }
+
+    async def initialize(self) -> None:
+        """Initialize the preview system"""
+        try:
+            self.logger.info("Initializing AdvancedPreviewSystem")
+
+            # Initialize renderers
+            self._initialize_renderers()
+
+            # Clear cache if needed
+            if self.cache:
+                self.cache.clear_expired()
+
+            self.logger.info("AdvancedPreviewSystem initialization complete")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize AdvancedPreviewSystem: {e}")
+            raise
 
     def _initialize_renderers(self):
         """Initialize preview renderers in priority order"""

@@ -34,9 +34,12 @@ from rich.style import Style
 
 from .core.file_manager import FileManager
 from .core.config import Config
+from .core.performance_optimizer import PerformanceOptimizer, PerformanceConfig
+from .core.startup_optimizer import StartupOptimizer, StartupConfig
 from .ui.theme import ThemeManager
 from .ui.panels import PanelManager
 from .ui.image_viewer import MediaViewer
+from .ui.animation_optimizer import AnimationOptimizer, AnimationConfig, AnimationQuality
 from .ai.assistant import AdvancedAIAssistant
 from .utils.hotkeys import HotkeyManager
 from .utils.navigation import NavigationThrottle, FastNavigationManager, KeyboardDebouncer
@@ -154,7 +157,7 @@ class LaxyFileApp:
     """Modern file manager with Superfile-like interface"""
 
     def __init__(self):
-        # Initialize console with full features and no stderr capture
+        # Initialize console with optimized settings for performance
         self.console = Console(
             force_terminal=True,
             width=None,
@@ -163,16 +166,18 @@ class LaxyFileApp:
             color_system="truecolor",
             stderr=False,  # Prevent stderr capture that might cause display issues
             file=sys.stdout,  # Explicit stdout binding
-            quiet=False
+            quiet=False,
+            _environ=os.environ  # Cache environment for performance
         )
 
-        # Core components
+        # Core components - lazy initialization for faster startup
         self.config = Config()
-        self.theme_manager = ThemeManager(self.config)
-        self.file_manager = FileManager()
-        self.panel_manager = PanelManager(self.theme_manager)
-        self.media_viewer = MediaViewer(self.console)
-        self.ai_assistant = AdvancedAIAssistant(self.config)
+        self.theme_manager = None  # Lazy init
+        self.file_manager = None   # Lazy init
+        self.panel_manager = None  # Lazy init
+        self.media_viewer = None   # Lazy init
+        self.ai_assistant = None   # Lazy init
+
         # Initialize navigation performance systems
         self.navigation_throttle = NavigationThrottle()
         self.fast_nav_manager = FastNavigationManager()
@@ -181,6 +186,17 @@ class LaxyFileApp:
         # Initialize hotkey manager
         self.hotkey_manager = HotkeyManager()
         self.logger = Logger()
+
+        # Performance optimizations
+        self._component_cache = {}
+        self._startup_complete = False
+        self._display_cache = {}
+        self._last_display_hash = None
+
+        # Initialize performance systems
+        self.performance_optimizer = None  # Lazy init
+        self.startup_optimizer = None      # Lazy init
+        self.animation_optimizer = None    # Lazy init
 
         # Application state
         self.running = True
@@ -204,6 +220,108 @@ class LaxyFileApp:
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+
+    def _get_theme_manager(self):
+        """Lazy initialization of theme manager"""
+        if self.theme_manager is None:
+            self.theme_manager = ThemeManager(self.config)
+            self._component_cache['theme_manager'] = self.theme_manager
+        return self.theme_manager
+
+    def _get_file_manager(self):
+        """Lazy initialization of file manager"""
+        if self.file_manager is None:
+            self.file_manager = FileManager()
+            self._component_cache['file_manager'] = self.file_manager
+        return self.file_manager
+
+    def _get_panel_manager(self):
+        """Lazy initialization of panel manager"""
+        if self.panel_manager is None:
+            self.panel_manager = PanelManager(self._get_theme_manager())
+            self._component_cache['panel_manager'] = self.panel_manager
+        return self.panel_manager
+
+    def _get_media_viewer(self):
+        """Lazy initialization of media viewer"""
+        if self.media_viewer is None:
+            self.media_viewer = MediaViewer(self.console)
+            self._component_cache['media_viewer'] = self.media_viewer
+        return self.media_viewer
+
+    def _get_ai_assistant(self):
+        """Lazy initialization of AI assistant"""
+        if self.ai_assistant is None:
+            try:
+                self.ai_assistant = AdvancedAIAssistant(self.config)
+                self._component_cache['ai_assistant'] = self.ai_assistant
+            except Exception as e:
+                self.logger.warning(f"AI assistant initialization failed: {e}")
+                # Create a dummy AI assistant for graceful degradation
+                self.ai_assistant = None
+        return self.ai_assistant
+
+    def _get_performance_optimizer(self):
+        """Lazy initialization of performance optimizer"""
+        if self.performance_optimizer is None:
+            perf_config = PerformanceConfig(
+                max_concurrent_operations=self.config.get('performance.max_concurrent_operations', 10),
+                chunk_size=self.config.get('performance.chunk_size', 100),
+                memory_threshold_mb=self.config.get('performance.memory_threshold_mb', 500),
+                lazy_loading_threshold=self.config.get('performance.lazy_loading_threshold', 1000),
+                background_processing=self.config.get('performance.background_processing', True),
+                use_threading=self.config.get('performance.use_threading', True),
+                max_worker_threads=self.config.get('performance.max_worker_threads', 4)
+            )
+            self.performance_optimizer = PerformanceOptimizer(perf_config)
+            self._component_cache['performance_optimizer'] = self.performance_optimizer
+        return self.performance_optimizer
+
+    def _get_animation_optimizer(self):
+        """Lazy initialization of animation optimizer"""
+        if self.animation_optimizer is None:
+            # Determine animation quality based on terminal capabilities and config
+            quality = AnimationQuality.MEDIUM
+            if self.config.get('ui.high_performance_mode', False):
+                quality = AnimationQuality.LOW
+            elif self.config.get('ui.disable_animations', False):
+                quality = AnimationQuality.DISABLED
+
+            anim_config = AnimationConfig(
+                quality=quality,
+                max_fps=self.config.get('ui.max_fps', 30),
+                enable_transitions=self.config.get('ui.enable_transitions', True),
+                enable_cursor_animations=self.config.get('ui.enable_cursor_animations', True),
+                enable_loading_animations=self.config.get('ui.enable_loading_animations', True),
+                adaptive_quality=self.config.get('ui.adaptive_animation_quality', True)
+            )
+            self.animation_optimizer = AnimationOptimizer(anim_config)
+            self._component_cache['animation_optimizer'] = self.animation_optimizer
+        return self.animation_optimizer
+
+    def _complete_startup(self):
+        """Complete startup initialization after first use"""
+        if not self._startup_complete:
+            # Initialize all components that weren't lazy-loaded
+            self._get_theme_manager()
+            self._get_file_manager()
+            self._get_panel_manager()
+            self._get_media_viewer()
+
+            # Initialize performance systems
+            try:
+                perf_optimizer = self._get_performance_optimizer()
+                asyncio.create_task(perf_optimizer.initialize())
+            except Exception as e:
+                self.logger.warning(f"Performance optimizer initialization failed: {e}")
+
+            try:
+                self._get_animation_optimizer()
+            except Exception as e:
+                self.logger.warning(f"Animation optimizer initialization failed: {e}")
+
+            self._startup_complete = True
+            self.logger.info("Startup initialization complete")
 
     def _signal_handler(self, signum, frame):
         """Handle system signals gracefully"""
@@ -264,7 +382,8 @@ class LaxyFileApp:
     def create_header(self) -> Panel:
         """Create beautiful header with gradients"""
         ui_config = self.config.get_ui()
-        theme_style = self.theme_manager.get_style("header")
+        theme_manager = self._get_theme_manager()
+        theme_style = theme_manager.get_style("header")
 
         # Create rainbow gradient title
         title_text = Text()

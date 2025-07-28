@@ -32,10 +32,16 @@ from ..utils.logger import Logger
 class SuperFileUI(UIManagerInterface):
     """SuperFile-inspired user interface manager with comprehensive rendering"""
 
-    def __init__(self, theme_manager: ThemeManager, console: Console, config: Any = None):
-        self.theme_manager = theme_manager
-        self.console = console
+    def __init__(self, config, file_manager, ai_assistant, preview_system, file_operations):
         self.config = config
+        self.file_manager = file_manager
+        self.ai_assistant = ai_assistant
+        self.preview_system = preview_system
+        self.file_operations = file_operations
+
+        # Initialize theme manager and console
+        self.theme_manager = ThemeManager(config)
+        self.console = Console()
         self.logger = Logger()
         self.layout = None
         self.current_width = 0
@@ -397,6 +403,105 @@ class SuperFileUI(UIManagerInterface):
     def apply_theme(self, theme_name: str) -> None:
         """Apply a theme to the UI"""
         self.theme_manager.set_theme(theme_name)
+
+    async def initialize(self) -> None:
+        """Initialize the UI manager"""
+        try:
+            self.logger.info("Initializing SuperFileUI")
+
+            # Create initial layout
+            self.create_layout()
+
+            # Initialize theme manager if needed
+            if hasattr(self.theme_manager, 'initialize'):
+                await self.theme_manager.initialize()
+
+            self.logger.info("SuperFileUI initialization complete")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize SuperFileUI: {e}")
+            raise
+
+    def on_file_change(self, file_path: Path) -> None:
+        """Handle file change events"""
+        self.logger.debug(f"File changed: {file_path}")
+        # Refresh the current view if the file is in the current directory
+        # This would be implemented based on current panel state
+
+    def on_directory_change(self, directory_path: Path) -> None:
+        """Handle directory change events"""
+        self.logger.debug(f"Directory changed: {directory_path}")
+        # Refresh directory listing
+        # This would be implemented based on current panel state
+
+    def set_preview_system(self, preview_system) -> None:
+        """Set the preview system for the UI"""
+        self.preview_system = preview_system
+
+    def on_operation_progress(self, operation_data: Dict[str, Any]) -> None:
+        """Handle operation progress updates"""
+        operation_id = operation_data.get('operation_id')
+        progress = operation_data.get('progress', 0)
+        self.logger.debug(f"Operation {operation_id} progress: {progress}%")
+        # Update progress display in UI
+
+    def on_operation_complete(self, operation_data: Dict[str, Any]) -> None:
+        """Handle operation completion"""
+        operation_id = operation_data.get('operation_id')
+        success = operation_data.get('success', False)
+        self.logger.info(f"Operation {operation_id} completed: {'success' if success else 'failed'}")
+        # Hide progress and refresh if needed
+
+    async def refresh_current_view(self) -> None:
+        """Refresh the current view"""
+        self.logger.debug("Refreshing current view")
+        # Refresh file listings and preview
+        # This would be implemented based on current state
+
+    def display_ai_response(self, response_data: Dict[str, Any]) -> None:
+        """Display AI response in the UI"""
+        response = response_data.get('response', '')
+        self.logger.debug(f"Displaying AI response: {response[:100]}...")
+        # Display AI response in appropriate UI area
+
+    async def show_operation_progress(self, operation_data: Dict[str, Any]) -> None:
+        """Show operation progress in UI"""
+        operation_id = operation_data.get('operation_id')
+        operation_type = operation_data.get('operation_type', 'operation')
+        self.logger.debug(f"Showing progress for {operation_type} operation: {operation_id}")
+        # Show progress bar or indicator
+
+    async def hide_operation_progress(self, operation_id: str) -> None:
+        """Hide operation progress from UI"""
+        self.logger.debug(f"Hiding progress for operation: {operation_id}")
+        # Hide progress bar or indicator
+
+    def update_file_list(self, files: List[EnhancedFileInfo]) -> None:
+        """Update the file list in the current panel"""
+        self.logger.debug(f"Updating file list with {len(files)} files")
+        # Update the file panel with new file list
+
+    def display_preview(self, preview_data: Dict[str, Any]) -> None:
+        """Display file preview"""
+        file_path = preview_data.get('file_path')
+        self.logger.debug(f"Displaying preview for: {file_path}")
+        # Display preview in preview panel
+
+    async def run(self) -> None:
+        """Run the UI main loop"""
+        self.logger.info("Starting SuperFileUI main loop")
+        try:
+            # This would contain the main UI event loop
+            # For now, just a placeholder
+            import asyncio
+            while True:
+                await asyncio.sleep(0.1)
+                # Handle UI events, keyboard input, etc.
+        except KeyboardInterrupt:
+            self.logger.info("UI interrupted by user")
+        except Exception as e:
+            self.logger.error(f"UI error: {e}")
+            raise
 
     def _adjust_layout_for_size(self, width: int, height: int) -> None:
         """Adjust layout components based on terminal size"""

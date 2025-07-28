@@ -12,7 +12,7 @@ import mimetypes
 import hashlib
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional, AsyncIterator, Tuple
+from typing import List, Dict, Any, Optional, AsyncIterator, Tuple, Callable
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from collections import defaultdict, OrderedDict
@@ -121,10 +121,61 @@ class AdvancedFileManager(FileManagerInterface):
         )
         self.performance_optimizer = PerformanceOptimizer(perf_config)
 
+        # Callback registration for component integration
+        self.change_callbacks: List[Callable] = []
+        self.directory_change_callbacks: List[Callable] = []
+
+    def register_change_callback(self, callback: Callable) -> None:
+        """Register a callback for file change events"""
+        self.change_callbacks.append(callback)
+
+    def register_directory_change_callback(self, callback: Callable) -> None:
+        """Register a callback for directory change events"""
+        self.directory_change_callbacks.append(callback)
+
+    def _notify_change_callbacks(self, file_path: Path) -> None:
+        """Notify all change callbacks"""
+        for callback in self.change_callbacks:
+            try:
+                callback(file_path)
+            except Exception as e:
+                self.logger.error(f"Error in change callback: {e}")
+
+    def _notify_directory_change_callbacks(self, directory_path: Path) -> None:
+        """Notify all directory change callbacks"""
+        for callback in self.directory_change_callbacks:
+            try:
+                callback(directory_path)
+            except Exception as e:
+                self.logger.error(f"Error in directory change callback: {e}")
+
+    async def initialize(self) -> None:
+        """Initialize the advanced file manager"""
+        try:
+            self.logger.info("Initializing AdvancedFileManager")
+
+            # Initialize file type detector
+            if hasattr(self.file_type_detector, 'initialize'):
+                await self.file_type_detector.initialize()
+
+            # Initialize performance optimizer
+            if hasattr(self.performance_optimizer, 'initialize'):
+                await self.performance_optimizer.initialize()
+
+            # Clear caches to start fresh
+            self.invalidate_cache()
+
+            self.logger.info("AdvancedFileManager initialization complete")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize AdvancedFileManager: {e}")
+            raise
+
     async def list_directory(self, path: Path, show_hidden: bool = False,
                            sort_type: SortType = SortType.NAME, reverse: bool = False,
-                           filter_pattern: str = "") -> List[EnhancedFileInfo]:
-        """List directory contents with enhanced file information and sorting"""
+                           filter_pattern: str = "", lazy_load: bool = False,
+                           chunk_size: int = None) -> List[EnhancedFileInfo]:
+        """List directory contents with enhanced file information and performance optimizations"""
         start_time = time.time()
 
         try:
@@ -133,8 +184,8 @@ class AdvancedFileManager(FileManagerInterface):
             cached_result = self._directory_cache.get(cache_key)
             if cached_result:
                 cached_files, cache_time = cached_result
-                # Use cache if less than 5 seconds old
-                if (datetime.now() - cache_time).seconds < 5:
+                # Use cache if less than 3 seconds old for better performance
+                if (datetime.now() - cache_time).seconds < 3:
                     return cached_files
 
             files = []
@@ -156,15 +207,25 @@ class AdvancedFileManager(FileManagerInterface):
             # List directory contents with performance optimization
             try:
                 items = list(path.iterdir())
+                item_count = len(items)
 
-                # Limit items for performance
+                # Performance optimization for large directories
                 max_items = self.config.get('ui.max_files_display', 1000)
-                if len(items) > max_items:
-                    self.logger.warning(f"Directory has {len(items)} items, limiting to {max_items}")
+                if item_count > max_items:
+                    self.logger.warning(f"Directory has {item_count} items, limiting to {max_items}")
                     items = items[:max_items]
 
-                # Process items concurrently for better performance
-                tasks = []
+                # Adaptive chunk size based on directory size
+                if chunk_size is None:
+                    if item_count > 10000:
+                        chunk_size = 50
+                    elif item_count > 1000:
+                        chunk_size = 100
+                    else:
+                        chunk_size = 200
+
+                # Filter items early to reduce processing
+                filtered_items = []
                 for item in items:
                     # Skip hidden files if not requested
                     if not show_hidden and item.name.startswith('.'):
@@ -174,16 +235,47 @@ class AdvancedFileManager(FileManagerInterface):
                     if filter_pattern and filter_pattern.lower() not in item.name.lower():
                         continue
 
-                    tasks.append(self.get_file_info(item))
+                    filtered_items.append(item)
 
-                # Execute tasks concurrently
-                if tasks:
+                # Process items in chunks for better memory management
+                if lazy_load and len(filtered_items) > chunk_size:
+                    # Process first chunk immediately, rest in background
+                    immediate_items = filtered_items[:chunk_size]
+                    background_items = filtered_items[chunk_size:]
+
+                    # Process immediate items
+                    tasks = [self.get_file_info(item) for item in immediate_items]
                     file_infos = await asyncio.gather(*tasks, return_exceptions=True)
 
-                    # Filter out exceptions and add valid file infos
+                    # Add valid file infos
                     for file_info in file_infos:
                         if not isinstance(file_info, Exception):
                             files.append(file_info)
+
+                    # Schedule background processing
+                    if background_items and hasattr(self.performance_optimizer, 'submit_background_task'):
+                        self.performance_optimizer.submit_background_task(
+                            'file_processing',
+                            self._process_background_items,
+                            background_items, cache_key
+                        )
+                else:
+                    # Process all items concurrently with chunking
+                    for i in range(0, len(filtered_items), chunk_size):
+                        chunk = filtered_items[i:i + chunk_size]
+                        tasks = [self.get_file_info(item) for item in chunk]
+
+                        # Process chunk
+                        file_infos = await asyncio.gather(*tasks, return_exceptions=True)
+
+                        # Add valid file infos
+                        for file_info in file_infos:
+                            if not isinstance(file_info, Exception):
+                                files.append(file_info)
+
+                        # Small delay between chunks for large directories
+                        if item_count > 5000 and i + chunk_size < len(filtered_items):
+                            await asyncio.sleep(0.001)  # 1ms delay
 
             except PermissionError:
                 self.logger.warning(f"Permission denied accessing {path}")
@@ -192,12 +284,17 @@ class AdvancedFileManager(FileManagerInterface):
             # Sort files
             files = self._sort_files(files, sort_type, reverse)
 
-            # Cache the result
+            # Cache the result with shorter TTL for large directories
+            cache_ttl = 1 if item_count > 5000 else 3
             self._directory_cache.set(cache_key, files, datetime.now())
 
             # Track performance
             duration = time.time() - start_time
             self._performance_stats['list_directory'].append(duration)
+
+            # Log performance for large directories
+            if item_count > 1000:
+                self.logger.debug(f"Listed {item_count} items in {duration:.3f}s")
 
             return files
 
@@ -615,3 +712,79 @@ class AdvancedFileManager(FileManagerInterface):
             del self._directory_cache.cache[key]
 
         self.logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+
+    def _process_background_items(self, items: List[Path], cache_key: str) -> None:
+        """Process background items for lazy loading"""
+        try:
+            # This would be called in a background thread
+            background_files = []
+
+            for item in items:
+                try:
+                    # Create a synchronous version of get_file_info for background processing
+                    stat_info = item.stat()
+                    file_info = EnhancedFileInfo(
+                        path=item,
+                        name=item.name,
+                        size=stat_info.st_size,
+                        modified=datetime.fromtimestamp(stat_info.st_mtime),
+                        is_dir=item.is_dir(),
+                        is_symlink=item.is_symlink(),
+                        file_type=self._determine_file_type(item),
+                        permissions_octal=oct(stat_info.st_mode)[-3:],
+                        is_hidden=item.name.startswith('.')
+                    )
+
+                    # Add icon
+                    file_info.icon = self._get_file_icon(file_info)
+                    background_files.append(file_info)
+
+                except Exception as e:
+                    self.logger.error(f"Error processing background item {item}: {e}")
+                    continue
+
+            # Update cache with background results
+            if background_files:
+                cached_result = self._directory_cache.get(cache_key)
+                if cached_result:
+                    cached_files, cache_time = cached_result
+                    # Merge background files with cached files
+                    all_files = cached_files + background_files
+                    self._directory_cache.set(cache_key, all_files, cache_time)
+
+                self.logger.debug(f"Processed {len(background_files)} background items")
+
+        except Exception as e:
+            self.logger.error(f"Error in background processing: {e}")
+
+    async def optimize_for_large_directory(self, file_count: int) -> Dict[str, Any]:
+        """Optimize performance for large directory operations"""
+        try:
+            optimizations = []
+
+            # Use performance optimizer if available
+            if hasattr(self.performance_optimizer, 'optimize_for_large_directory'):
+                perf_result = await self.performance_optimizer.optimize_for_large_directory(file_count)
+                optimizations.extend(perf_result.get('optimizations_applied', []))
+
+            # File manager specific optimizations
+            if file_count > 10000:
+                # Reduce cache TTL for very large directories
+                self._directory_cache.cache.clear()
+                optimizations.append("Cleared directory cache for large directory")
+
+            if file_count > 5000:
+                # Trigger cache cleanup
+                await self.cleanup_cache()
+                optimizations.append("Performed cache cleanup")
+
+            return {
+                'file_count': file_count,
+                'optimizations_applied': optimizations,
+                'cache_stats': self.get_cache_stats(),
+                'performance_stats': self.get_performance_stats()
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error optimizing for large directory: {e}")
+            return {'error': str(e)}

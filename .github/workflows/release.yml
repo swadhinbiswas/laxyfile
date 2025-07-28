@@ -1,0 +1,202 @@
+name: Release and Deploy
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release"
+        required: true
+        default: "1.0.0"
+
+jobs:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v --cov=laxyfile --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  build-packages:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine wheel setuptools
+          pip install -r requirements.txt
+
+      - name: Build packages
+        run: |
+          python scripts/build_release.py
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-packages
+          path: dist/
+          retention-days: 30
+
+  deploy-pypi:
+    needs: build-packages
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-packages
+          path: dist/
+
+      - name: Install deployment dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install twine build
+
+      - name: Deploy to Test PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          TWINE_REPOSITORY_URL: https://test.pypi.org/legacy/
+        run: |
+          python -m twine upload dist/*.whl dist/*.tar.gz --skip-existing
+
+      - name: Deploy to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m twine upload dist/*.whl dist/*.tar.gz --skip-existing
+
+  create-github-release:
+    needs: build-packages
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-packages
+          path: dist/
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release Notes
+        id: release_notes
+        run: |
+          if [ -f "dist/RELEASE_NOTES_v${{ steps.get_version.outputs.VERSION }}.md" ]; then
+            echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+            cat "dist/RELEASE_NOTES_v${{ steps.get_version.outputs.VERSION }}.md" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "RELEASE_NOTES=LaxyFile v${{ steps.get_version.outputs.VERSION }} release" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: LaxyFile ${{ steps.get_version.outputs.VERSION }}
+          body: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
+          files: |
+            dist/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-package-managers:
+    needs: [deploy-pypi, create-github-release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Update Homebrew Formula
+        run: |
+          python scripts/create_homebrew_formula.py --version ${{ steps.get_version.outputs.VERSION }}
+
+      - name: Update Chocolatey Package
+        run: |
+          python scripts/create_chocolatey_package.py --version ${{ steps.get_version.outputs.VERSION }}
+
+      - name: Commit package manager updates
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add packaging/
+          git commit -m "Update package manager configs for v${{ steps.get_version.outputs.VERSION }}" || exit 0
+          git push
+
+  notify-completion:
+    needs: [deploy-pypi, create-github-release, update-package-managers]
+    runs-on: ubuntu-latest
+    if: always() && startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Notify deployment completion
+        run: |
+          echo "🎉 LaxyFile deployment completed!"
+          echo "✅ PyPI: https://pypi.org/project/laxyfile/"
+          echo "✅ GitHub: https://github.com/swadhinbiswas/laxyfile/releases"
+          echo "📦 Installation: pip install laxyfile"

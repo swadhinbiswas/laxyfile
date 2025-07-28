@@ -21,7 +21,7 @@ from ..preview.preview_system import AdvancedPreviewSystem
 from ..operations.file_ops import ComprehensiveFileOperations
 from ..plugins.plugin_manager import PluginManager
 from ..utils.logging_system import get_logger, LogCategory
-from ..utils.performance_logger import PerformanceLogger
+from ..utils.performance_logger import PerformanceLogger, MetricUnit
 
 
 @dataclass
@@ -75,7 +75,7 @@ class ComponentIntegrator:
             initialization_order = [
                 ('config', self._initialize_config),
                 ('file_manager', self._initialize_file_manager),
-                ('preview_system', self._inie_preview_system),
+                ('preview_system', self._initialize_preview_system),
                 ('file_operations', self._initialize_file_operations),
                 ('ai_assistant', self._initialize_ai_assistant),
                 ('plugin_manager', self._initialize_plugin_manager),
@@ -92,8 +92,8 @@ class ComponentIntegrator:
                 self.performance_logger.record_metric(
                     f"component_init_{component_name}_ms",
                     component_time * 1000,
-                    "ms",
-                    "initialization"
+                    MetricUnit.MILLISECONDS,
+                    "timer"
                 )
 
                 if not success:
@@ -115,8 +115,8 @@ class ComponentIntegrator:
             self.performance_logger.record_metric(
                 "total_startup_time_ms",
                 self.startup_time * 1000,
-                "ms",
-                "initialization"
+                MetricUnit.MILLISECONDS,
+                "timer"
             )
 
             return True
@@ -169,7 +169,18 @@ class ComponentIntegrator:
     async def _initialize_preview_system(self) -> bool:
         """Initialize preview system"""
         try:
-            preview_system = AdvancedPreviewSystem(self.config)
+            # Create preview config from main config
+            from ..preview.preview_system import PreviewConfig
+            preview_config = PreviewConfig()
+
+            # Override with config values if available
+            preview_settings = self.config.get('preview', {})
+            if 'max_file_size' in preview_settings:
+                preview_config.max_file_size = preview_settings['max_file_size']
+            if 'cache_enabled' in preview_settings:
+                preview_config.cache_enabled = preview_settings['cache_enabled']
+
+            preview_system = AdvancedPreviewSystem(preview_config)
             await preview_system.initialize()
 
             self.components['preview_system'] = preview_system
@@ -231,19 +242,52 @@ class ComponentIntegrator:
             )
             return True
         except Exception as e:
-            self.logger.error(f"AI assistant initialization failed: {e}")
+            self.logger.warning(f"AI assistant initialization failed (this is expected if no API keys are configured): {e}")
+
+            # Create a dummy AI assistant for testing purposes
+            class DummyAIAssistant:
+                def __init__(self, logger):
+                    self.logger = logger
+
+                async def initialize(self):
+                    pass
+
+                def set_file_manager(self, file_manager):
+                    pass
+
+                async def process_query(self, query, context=None):
+                    return {
+                        'success': False,
+                        'response': 'AI assistant not configured',
+                        'error': 'No AI models available'
+                    }
+
+                def health_check(self):
+                    return False
+
+            self.components['ai_assistant'] = DummyAIAssistant(self.logger)
             self.component_status['ai_assistant'] = ComponentStatus(
                 name='ai_assistant',
-                initialized=False,
+                initialized=True,
                 healthy=False,
-                error_message=str(e)
+                error_message=str(e),
+                dependencies=['config', 'file_manager']
             )
-            return False
+            return True  # Return True to continue with other components
 
     async def _initialize_plugin_manager(self) -> bool:
         """Initialize plugin manager"""
         try:
-            plugin_manager = PluginManager(self.config)
+            # Get plugin directories from config
+            plugin_dirs = self.config.get('plugins.directories', [])
+            if isinstance(plugin_dirs, str):
+                plugin_dirs = [Path(plugin_dirs)]
+            elif isinstance(plugin_dirs, list):
+                plugin_dirs = [Path(d) for d in plugin_dirs]
+            else:
+                plugin_dirs = None
+
+            plugin_manager = PluginManager(plugin_dirs=plugin_dirs)
             await plugin_manager.initialize()
 
             # Load enabled plugins

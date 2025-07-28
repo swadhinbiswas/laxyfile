@@ -168,6 +168,34 @@ class ComprehensiveFileOperations(OperationInterface):
         # Cancellation support
         self.cancelled_operations: set = set()
 
+        # Callback registration
+        self.progress_callbacks: List[Callable] = []
+        self.completion_callbacks: List[Callable] = []
+
+    def register_progress_callback(self, callback: Callable) -> None:
+        """Register a callback for operation progress updates"""
+        self.progress_callbacks.append(callback)
+
+    def register_completion_callback(self, callback: Callable) -> None:
+        """Register a callback for operation completion"""
+        self.completion_callbacks.append(callback)
+
+    def _notify_progress_callbacks(self, operation_data: Dict[str, Any]) -> None:
+        """Notify all progress callbacks"""
+        for callback in self.progress_callbacks:
+            try:
+                callback(operation_data)
+            except Exception as e:
+                self.logger.error(f"Error in progress callback: {e}")
+
+    def _notify_completion_callbacks(self, operation_data: Dict[str, Any]) -> None:
+        """Notify all completion callbacks"""
+        for callback in self.completion_callbacks:
+            try:
+                callback(operation_data)
+            except Exception as e:
+                self.logger.error(f"Error in completion callback: {e}")
+
     async def copy_files(self, sources: List[Path], destination: Path,
                         progress_callback: Optional[Callable] = None) -> OperationResult:
         """Copy files with comprehensive progress tracking and error handling"""

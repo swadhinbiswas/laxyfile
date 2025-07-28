@@ -8,7 +8,7 @@ LaxyFile application, handling plugin lifecycle and API injection.
 import asyncio
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .plugin_manager import PluginManager
 from .plugin_api import PluginAPI, APIVersion
@@ -23,7 +23,7 @@ class PluginIntegrationConfig:
     enabled: bool = True
     auto_load: bool = True
     auto_enable: bool = True
-    plugin_dirs: List[Path] = None
+    plugin_dirs: Optional[List[Path]] = None
     api_version: APIVersion = APIVersion.V2_0
     max_load_time: float = 30.0
     enable_examples: bool = False
@@ -39,7 +39,7 @@ class PluginIntegrationConfig:
 class PluginIntegration:
     """Main plugin integration system"""
 
-    def __init__(self, config: Config, integration_config: PluginIntegrationConfig = None):
+    def __init__(self, config: Config, integration_config: Optional[PluginIntegrationConfig] = None):
         self.config = config
         self.integration_config = integration_config or PluginIntegrationConfig()
         self.logger = Logger()
@@ -58,7 +58,7 @@ class PluginIntegration:
 
         # Integration state
         self.is_initialized = False
-        self.startup_results = []
+        self.startup_results: List[Any] = []
 
         # Setup API references
         self._setup_api_references()
@@ -132,7 +132,8 @@ class PluginIntegration:
             self.logger.info(f"Plugin enabled: {plugin_info.plugin_id}")
 
             # Emit application event
-            await self.api.emit_event('plugin_enabled', {
+            if self.api:
+                await self.api.emit_event('plugin_enabled', {
                     'plugin_id': plugin_info.plugin_id,
                     'plugin_info': plugin_info.to_dict()
                 })
@@ -264,4 +265,84 @@ class PluginIntegration:
             'enabled_count': len(self.plugin_manager.get_enabled_plugins()),
             'plugins': self.plugin_manager.get_plugin_status(),
             'startup_results': [r.to_dict() for r in self.startup_results]
-        }\n    \n    def list_available_plugins(self) -> List[Dict[str, Any]]:\n        \"\"\"List available plugins for installation\"\"\"\n        try:\n            packages = self.plugin_loader.list_available_plugins()\n            return [pkg.to_dict() for pkg in packages]\n            \n        except Exception as e:\n            self.logger.error(f\"Error listing available plugins: {e}\")\n            return []\n    \n    def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:\n        \"\"\"Get detailed information about a plugin\"\"\"\n        plugin_info = self.plugin_manager.get_plugin(plugin_id)\n        return plugin_info.to_dict() if plugin_info else None\n    \n    def get_plugin_instance(self, plugin_id: str):\n        \"\"\"Get plugin instance for direct interaction\"\"\"\n        return self.plugin_manager.get_plugin_instance(plugin_id)\n    \n    async def execute_plugin_hook(self, hook_name: str, *args, **kwargs) -> List[Any]:\n        \"\"\"Execute a plugin hook across all plugins\"\"\"\n        try:\n            return await self.api.execute_hook(hook_name, *args, **kwargs)\n            \n        except Exception as e:\n            self.logger.error(f\"Error executing plugin hook {hook_name}: {e}\")\n            return []\n    \n    def register_global_hook(self, hook_name: str, callback, priority: int = 50) -> bool:\n        \"\"\"Register a global hook callback\"\"\"\n        try:\n            return self.api.register_hook_callback(hook_name, callback, priority)\n            \n        except Exception as e:\n            self.logger.error(f\"Error registering global hook {hook_name}: {e}\")\n            return False\n    \n    async def emit_application_event(self, event_name: str, data: Dict[str, Any] = None) -> List[Any]:\n        \"\"\"Emit an application event to all plugins\"\"\"\n        try:\n            return await self.api.emit_event(event_name, data or {})\n            \n        except Exception as e:\n            self.logger.error(f\"Error emitting application event {event_name}: {e}\")\n            return []\n    \n    def get_api_capabilities(self) -> Dict[str, Any]:\n        \"\"\"Get available API capabilities\"\"\"\n        capabilities = self.api.get_capabilities()\n        return {name: cap.to_dict() for name, cap in capabilities.items()}\n    \n    async def shutdown(self):\n        \"\"\"Shutdown the plugin system\"\"\"\n        try:\n            self.logger.info(\"Shutting down plugin system...\")\n            \n            # Emit shutdown event\n            await self.emit_application_event('application_shutdown')\n            \n            # Shutdown plugin manager\n            await self.plugin_manager.shutdown()\n            \n            # Cleanup temporary files\n            self.plugin_loader.cleanup_temp_files()\n            \n            self.is_initialized = False\n            self.logger.info(\"Plugin system shutdown complete\")\n            \n        except Exception as e:\n            self.logger.error(f\"Error during plugin system shutdown: {e}\")\n    \n    def __str__(self) -> str:\n        \"\"\"String representation\"\"\"\n        return f\"PluginIntegration: {len(self.plugin_manager.plugins)} plugins\"\n    \n    def __repr__(self) -> str:\n        \"\"\"Detailed representation\"\"\"\n        enabled_count = len(self.plugin_manager.get_enabled_plugins())\n        return f\"<PluginIntegration: {len(self.plugin_manager.plugins)} loaded, {enabled_count} enabled>\""
+        }
+
+    def list_available_plugins(self) -> List[Dict[str, Any]]:
+        """List available plugins for installation"""
+        try:
+            packages = self.plugin_loader.list_available_plugins()
+            return [pkg.to_dict() for pkg in packages]
+
+        except Exception as e:
+            self.logger.error(f"Error listing available plugins: {e}")
+            return []
+
+    def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a plugin"""
+        plugin_info = self.plugin_manager.get_plugin(plugin_id)
+        return plugin_info.to_dict() if plugin_info else None
+
+    def get_plugin_instance(self, plugin_id: str) -> Optional[Any]:
+        """Get plugin instance for direct interaction"""
+        return self.plugin_manager.get_plugin_instance(plugin_id)
+
+    async def execute_plugin_hook(self, hook_name: str, *args, **kwargs) -> List[Any]:
+        """Execute a plugin hook across all plugins"""
+        try:
+            return await self.api.execute_hook(hook_name, *args, **kwargs)
+
+        except Exception as e:
+            self.logger.error(f"Error executing plugin hook {hook_name}: {e}")
+            return []
+
+    def register_global_hook(self, hook_name: str, callback, priority: int = 50) -> bool:
+        """Register a global hook callback"""
+        try:
+            return self.api.register_hook_callback(hook_name, callback, priority)
+
+        except Exception as e:
+            self.logger.error(f"Error registering global hook {hook_name}: {e}")
+            return False
+
+    async def emit_application_event(self, event_name: str, data: Optional[Dict[str, Any]] = None) -> List[Any]:
+        """Emit an application event to all plugins"""
+        try:
+            return await self.api.emit_event(event_name, data or {})
+
+        except Exception as e:
+            self.logger.error(f"Error emitting application event {event_name}: {e}")
+            return []
+
+    def get_api_capabilities(self) -> Dict[str, Any]:
+        """Get available API capabilities"""
+        capabilities = self.api.get_capabilities()
+        return {name: cap.to_dict() for name, cap in capabilities.items()}
+
+    async def shutdown(self):
+        """Shutdown the plugin system"""
+        try:
+            self.logger.info("Shutting down plugin system...")
+
+            # Emit shutdown event
+            await self.emit_application_event('application_shutdown')
+
+            # Shutdown plugin manager
+            await self.plugin_manager.shutdown()
+
+            # Cleanup temporary files
+            self.plugin_loader.cleanup_temp_files()
+
+            self.is_initialized = False
+            self.logger.info("Plugin system shutdown complete")
+
+        except Exception as e:
+            self.logger.error(f"Error during plugin system shutdown: {e}")
+
+    def __str__(self) -> str:
+        """String representation"""
+        return f"PluginIntegration: {len(self.plugin_manager.plugins)} plugins"
+
+    def __repr__(self) -> str:
+        """Detailed representation"""
+        enabled_count = len(self.plugin_manager.get_enabled_plugins())
+        return f"<PluginIntegration: {len(self.plugin_manager.plugins)} loaded, {enabled_count} enabled>"

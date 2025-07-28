@@ -134,7 +134,7 @@ class AIModelManager:
                 self.logger.error(f"Failed to initialize model {model_id}: {e}")
 
         if not self.fallback_order:
-            raise ConfigurationError("No AI models available")
+            raise ConfigurationError("ai_models", "No AI models available")
 
     def _tesdel_availability(self, model: AIModel) -> bool:
         """Test if a model is available"""
@@ -249,7 +249,7 @@ class AIModelManager:
 
 
 class ResponseCache:
-    """Cache for AI responses to reduce API calls and costs"""
+    """Enhanced cache for AI responses with performance optimizations"""
 
     def __init__(self, max_size: int = 1000, default_ttl: int = 3600):
         self.max_size = max_size
@@ -257,6 +257,16 @@ class ResponseCache:
         self.cache: Dict[str, CacheEntry] = {}
         self.access_order: List[str] = []
         self.logger = Logger()
+
+        # Performance optimizations
+        self._cache_stats = {
+            'hits': 0,
+            'misses': 0,
+            'evictions': 0,
+            'size': 0
+        }
+        self._last_cleanup = time.time()
+        self._cleanup_interval = 300  # 5 minutes
 
     def _generate_key(self, prompt: str, model: str, **kwargs) -> str:
         """Generate cache key from prompt and parameters"""
@@ -269,10 +279,17 @@ class ResponseCache:
         return hashlib.sha256(key_string.encode()).hexdigest()
 
     def get(self, prompt: str, model: str, **kwargs) -> Optional[Any]:
-        """Get cached response"""
+        """Get cached response with performance optimizations"""
+        # Periodic cleanup
+        current_time = time.time()
+        if current_time - self._last_cleanup > self._cleanup_interval:
+            self.clear_expired()
+            self._last_cleanup = current_time
+
         key = self._generate_key(prompt, model, **kwargs)
 
         if key not in self.cache:
+            self._cache_stats['misses'] += 1
             return None
 
         entry = self.cache[key]
@@ -282,6 +299,7 @@ class ResponseCache:
             del self.cache[key]
             if key in self.access_order:
                 self.access_order.remove(key)
+            self._cache_stats['misses'] += 1
             return None
 
         # Update access
@@ -290,6 +308,7 @@ class ResponseCache:
             self.access_order.remove(key)
         self.access_order.append(key)
 
+        self._cache_stats['hits'] += 1
         return entry.response
 
     def set(self, prompt: str, model: str, response: Any, ttl: Optional[int] = None, **kwargs):
@@ -957,5 +976,84 @@ Respond in JSON format with the following structure:
     async def refresh_models(self):
         """Refresh model availability"""
         for model_id, model in self.model_manager.models.items():
-            is_available = self.model_manager._test_model_availability(model)
+            is_available = self.model_manager._test_availability(model)
             self.model_manager.update_model_status(model_id, is_available)
+            is_available = self.model_manager._test_availability(model)
+            self.model_manager.update_model_status(model_id, is_available)
+
+    async def initialize(self) -> None:
+        """Initialize the AI assistant"""
+        try:
+            self.logger.info("Initializing AdvancedAIAssistant")
+
+            # Refresh model availability
+            await self.refresh_models()
+
+            # Clear expired cache entries
+            self.cache.clear_expired()
+
+            self.logger.info("AdvancedAIAssistant initialization complete")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize AdvancedAIAssistant: {e}")
+            raise
+
+    def set_file_manager(self, file_manager) -> None:
+        """Set the file manager for context"""
+        self.file_manager = file_manager
+        self.logger.debug("File manager set for AI assistant")
+
+    async def process_query(self, query: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Process a natural language query"""
+        try:
+            self.logger.debug(f"Processing query: {query[:100]}...")
+
+            # Get best model for general queries
+            model = self.model_manager.get_best_model(['text_generation'])
+            if not model:
+                return {
+                    'success': False,
+                    'response': 'No AI models available',
+                    'error': 'No models configured'
+                }
+
+            # Create context-aware prompt
+            prompt = self._create_query_prompt(query, context or {})
+
+            # Call model
+            response = await self._call_model(model, prompt, AnalysisType.CONTENT)
+
+            return {
+                'success': True,
+                'response': response,
+                'model': model.model_name,
+                'query': query
+            }
+
+        except Exception as e:
+            self.logger.error(f"Query processing failed: {e}")
+            return {
+                'success': False,
+                'response': f'Error processing query: {e}',
+                'error': str(e)
+            }
+
+    def _create_query_prompt(self, query: str, context: Dict[str, Any]) -> str:
+        """Create a context-aware prompt for queries"""
+        prompt = f"User query: {query}\n\n"
+
+        # Add file context if available
+        if 'current_directory' in context:
+            prompt += f"Current directory: {context['current_directory']}\n"
+
+        if 'selected_files' in context:
+            files = context['selected_files']
+            if files:
+                prompt += f"Selected files: {', '.join(str(f) for f in files[:5])}\n"
+
+        if 'file_count' in context:
+            prompt += f"Total files in directory: {context['file_count']}\n"
+
+        prompt += "\nPlease provide a helpful response based on the query and context."
+
+        return prompt

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>laxyfile</id>
+    <version>1.0.0</version>
+    <packageSourceUrl>https://github.com/swadhinbiswas/laxyfile</packageSourceUrl>
+    <owners>swadhinbiswas</owners>
+    <title>LaxyFile</title>
+    <authors>Swadhin Biswas</authors>
+    <projectUrl>https://github.com/swadhinbiswas/laxyfile</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/swadhinbiswas/laxyfile/main/docs/assets/logo.png</iconUrl>
+    <copyright>2024 Swadhin Biswas</copyright>
+    <licenseUrl>https://github.com/swadhinbiswas/laxyfile/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/swadhinbiswas/laxyfile</projectSourceUrl>
+    <docsUrl>https://github.com/swadhinbiswas/laxyfile/wiki</docsUrl>
+    <bugTrackerUrl>https://github.com/swadhinbiswas/laxyfile/issues</bugTrackerUrl>
+    <tags>file-manager terminal cli python ai superfile</tags>
+    <summary>Advanced Terminal File Manager with AI Integration</summary>
+    <description><![CDATA[
+LaxyFile is a beautiful, AI-powered terminal file manager inspired by Superfile with advanced media support and intelligent automation.
+
+## Features
+
+- **SuperFile-Inspired Interface**: Beautiful dual-pane file manager with modern terminal UI
+- **AI-Powered Assistant**: Intelligent file analysis, organization, and security auditing
+- **Advanced Media Support**: Image preview, video analysis, and metadata extraction
+- **Comprehensive File Operations**: Copy, move, delete, batch operations with progress tracking
+- **Multi-Platform Support**: Linux, macOS, and Windows compatibility
+
+## Key Capabilities
+
+- 🎨 **5 Beautiful Themes**: Cappuccino, Neon, Ocean, Sunset, and Forest
+- 🤖 **AI Assistant**: System analysis, file organization, and security auditing
+- 📁 **Smart File Icons**: Unicode and Nerd Font support for 50+ file types
+- 🖼️ **Media Preview**: Image, video, and document preview with metadata
+- ⚡ **Fast Navigation**: Vim-style (hjkl) + arrow key support
+- 🔍 **Advanced Search**: Intelligent file filtering and organization
+- 📊 **System Monitoring**: Device performance and resource usage insights
+- 🔒 **Security Features**: Permission analysis and vulnerability detection
+
+## Installation
+
+After installing via Chocolatey, you can start LaxyFile by running:
+
+```
+laxyfile
+```
+
+For AI features, set your OpenRouter API key:
+
+```
+set OPENROUTER_API_KEY=your-api-key
+laxyfile
+```
+
+## System Requirements
+
+- Windows 10 or later
+- Python 3.8 or higher (automatically installed)
+- Modern terminal with color support (Windows Terminal recommended)
+
+## Documentation
+
+- User Manual: https://github.com/swadhinbiswas/laxyfile/wiki
+- Configuration Guide: https://github.com/swadhinbiswas/laxyfile/wiki/Configuration
+- Troubleshooting: https://github.com/swadhinbiswas/laxyfile/wiki/Troubleshooting
+]]></description>
+    <releaseNotes>https://github.com/swadhinbiswas/laxyfile/releases/tag/v1.0.0</releaseNotes>
+    <dependencies>
+      <dependency id="python" version="3.8.0" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

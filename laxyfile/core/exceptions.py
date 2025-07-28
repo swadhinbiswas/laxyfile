@@ -434,3 +434,19 @@ class CacheFullError(CacheError):
         )
         self.cache_size = cache_size
         self.max_size = max_size
+
+
+class PerformanceError(LaxyFileError):
+    """Exception raised during performance operations"""
+
+    def __init__(self, operation: str, message: str,
+                 original_error: Optional[Exception] = None):
+        super().__init__(message)
+        self.operation = operation
+        self.original_error = original_error
+
+    def __str__(self) -> str:
+        result = f"Performance operation '{self.operation}' failed: {self.message}"
+        if self.original_error:
+            result += f"\nOriginal error: {self.original_error}"
+        return result

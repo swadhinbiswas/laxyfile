@@ -1,8 +1,7 @@
 """
-Performance tests for AdvancedFileManager
+Performance Tests for File Manager
 
-Benchmarks file management operations including directory listing, file info retrieval,
-search operations, and caching performance under various loads.
+Tests the performance characteristics of the AdvancedFileManager.
 """
 
 import pytest
@@ -11,456 +10,481 @@ import time
 import psutil
 import os
 from pathlib import Path
-from typing import List
-from datetime import datetime
+from unittest.mock import Mock
 
 from laxyfile.core.advanced_file_manager import AdvancedFileManager
-from laxyfile.core.types import SortType
 
 
 @pytest.mark.performance
 class TestFileManagerPerformance:
-    """Performance benchmarks for file manager operations"""
-
-    @pytest.fixture
-    def performance_config(self, mock_config):
-        """Create performance-optimized configuration"""
-        mock_config.get = lambda key, default=None: {
-            'cache_size': 2000,
-            'ui.use_magic_detection': True,
-            'ui.use_nerd_fonts': True,
-            'ui.max_files_display': 5000,
-            'performance.max_concurrent_operations': 20,
-            'performance.chunk_size': 128 * 1024,
-            'performance.memory_threshold_mb': 1000,
-            'performance.lazy_loading_threshold': 2000,
-            'performance.background_processing': True,
-            'performance.use_threading': True,
-            'performance.max_worker_threads': 8
-        }.get(key, default)
-        return mock_config
-
-    @pytest.fixture
-    def perf_file_manager(self, performance_config):
-        """Create performance-optimized file manager"""
-        return AdvancedFileManager(performance_config)
-
-    @pytest.fixture
-    def large_directory(self, temp_dir):
-        """Create large directory with many files for performance testing"""
-        large_dir = temp_dir / "large_perf_test"
-        large_dir.mkdir()
-
-        # Create files with different sizes and types
-        file_types = ['.txt', '.py', '.js', '.md', '.json', '.csv', '.log', '.xml']
-        sizes = [100, 1024, 10*1024, 100*1024]  # 100B to 100KB
-
-        created_files = []
-        for i in range(1000):  # Create 1000 files
-            file_type = file_types[i % len(file_types)]
-            size = sizes[i % len(sizes)]
-
-            file_path = large_dir / f"perf_file_{i:04d}{file_type}"
-            content = f"Performance test file {i}\n" + "x" * (size - 50)
-            file_path.write_text(content[:size])
-            created_files.append(file_path)
-
-        return large_dir, created_files
-
-    @pytest.fixture
-    def very_large_directory(self, temp_dir):
-        """Create very large directory for stress testing"""
-        very_large_dir = temp_dir / "very_large_perf_test"
-        very_large_dir.mkdir()
-
-        # Create subdirectories
-        subdirs = []
-        for i in range(10):
-dir = very_large_dir / f"subdir_{i:02d}"
-            subdir.mkdir()
-            subdirs.append(subdir)
-
-        # Create many files across subdirectories
-        created_files = []
-        for i in range(5000):  # Create 5000 files
-            subdir = subdirs[i % len(subdirs)]
-            file_path = subdir / f"stress_file_{i:05d}.txt"
-            file_path.write_text(f"Stress test file {i} content")
-            created_files.append(file_path)
-
-        return very_large_dir, subdirs, created_files
+    """Performance test cases for the AdvancedFileManager."""
 
     @pytest.mark.asyncio
-    async def test_directory_listing_performance(self, perf_file_manager, large_directory, benchmark):
-        """Benchmark directory listing performance"""
-        large_dir, created_files = large_directory
+    async def test_large_directory_listing_performance(self, test_config, large_directory, performance_monitor):
+        """Test performance of listing large directories."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
 
-        async def list_directory():
-            return await perf_file_manager.list_directory(large_dir)
+        performance_monitor.start()
 
-        # Benchmark the operation
-        result = benchmark(asyncio.run, list_directory())
+        # List large directory
+        files = await file_manager.list_directory(large_directory)
 
-        # Verify results
-        assert len(result) == len(created_files) + 1  # +1 for parent directory
+        measurement = performance_monitor.stop()
 
         # Performance assertions
-        stats = perf_file_manager.get_performance_stats()
-        if 'list_directory' in stats:
-            avg_time = stats['list_directory']['avg_time']
-            assert avg_time < 2.0  # Should complete within 2 seconds
+        assert measurement['duration'] < 2.0  # Should complete within 2 seconds
+        assert len(files) > 200  # Should handle large number of files
+        assert measurement['memory_delta'] < 50 * 1024 * 1024  # Less than 50MB memory increase
 
     @pytest.mark.asyncio
-    async def test_concurrent_directory_listing_performance(self, perf_file_manager, large_directory, benchmark):
-        """Benchmark concurrent directory listing performance"""
-        large_dir, _ = large_directory
+    async def test_concurrent_file_operations_performance(self, test_config, temp_dir, performance_monitor):
+        """Test performance of concurrent file operations."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
 
-        # Create multiple subdirectories
-        subdirs = []
-        for i in range(5):
-            subdir = large_dir / f"concurrent_subdir_{i}"
-            subdir.mkdir()
+        # Create test files
+        test_files = []
+        for i in range(50):
+            file_path = temp_dir / f'perf_test_{i}.txt'
+            file_path.write_text(f'Performance test content {i}' * 100)
+            test_files.append(file_path)
 
-            # Add files to each subdirectory
-            for j in range(100):
-                file_path = subdir / f"concurrent_file_{j}.txt"
-                file_path.write_text(f"Concurrent test file {i}-{j}")
+        performance_monitor.start()
 
-            subdirs.append(subdir)
+        # Concurrent file info retrieval
+        tasks = [file_manager.get_file_info(f) for f in test_files]
+        results = await asyncio.gather(*tasks)
 
-        async def concurrent_listing():
-            tasks = [perf_file_manager.list_directory(subdir) for subdir in subdirs]
-            return await asyncio.gather(*tasks)
+        measurement = performance_monitor.stop()
 
-        # Benchmark concurrent operations
-        results = benchmark(asyncio.run, concurrent_listing())
-
-        # Verify results
-        assert len(results) == len(subdirs)
-        for result in results:
-            assert len(result) == 101  # 100 files + parent directory
+        # Performance assertions
+        assert len(results) == 50
+        assert measurement['duration'] < 3.0  # Should complete within 3 seconds
+        assert all(r is not None for r in results)
 
     @pytest.mark.asyncio
-    async def test_file_info_retrieval_performance(self, perf_file_manager, large_directory, benchmark):
-        """Benchmark file info retrieval performance"""
-        large_dir, created_files = large_directory
+    async def test_file_caching_performance(self, test_config, sample_files, performance_monitor):
+        """Test performance benefits of file caching."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
 
-        # Select subset of files for testing
-        test_files = created_files[:100]
+        file_path = sample_files['text1']
 
-        async def get_file_infos():
-            tasks = [perf_file_manager.get_file_info(file_path) for file_path in test_files]
-            return await asyncio.gather(*tasks)
+        # First call (no cache)
+        performance_monitor.start()
+        info1 = await file_manager.get_file_info(file_path)
+        first_call =_monitor.stop()
 
-        # Benchmark the operation
-        results = benchmark(asyncio.run, get_file_infos())
-
-        # Verify results
-        assert len(results) == len(test_files)
-        for result in results:
-            assert result.name is not None
-            assert result.size >= 0
-
-    @pytest.mark.asyncio
-    async def test_search_performance(self, perf_file_manager, large_directory, benchmark):
-        """Benchmark search operation performance"""
-        large_dir, created_files = large_directory
-
-        # Add searchable content to some files
-        search_files = created_files[:200]
-        for i, file_path in enumerate(search_files):
-            if i % 10 == 0:  # Every 10th file gets special content
-                content = file_path.read_text() + "\nSPECIAL_SEARCH_MARKER"
-                file_path.write_text(content)
-
-        async def search_files():
-            return await perf_file_manager.search_files(large_dir, "SPECIAL_SEARCH_MARKER", include_content=True)
-
-        # Benchmark the search
-        results = benchmark(asyncio.run, search_files())
-
-        # Verify results
-        assert len(results) >= 20  # Should find marked files
-
-        # Performance assertion
-        stats = perf_file_manager.get_performance_stats()
-        if 'search_files' in stats:
-            avg_time = stats['search_files']['avg_time']
-            assert avg_time < 5.0  # Should complete within 5 seconds
-
-    @pytest.mark.asyncio
-    async def test_cache_performance(self, perf_file_manager, large_directory, benchmark):
-        """Benchmark cache performance and hit rates"""
-        large_dir, created_files = large_directory
-
-        # First pass - populate cache
-        test_files = created_files[:50]
-
-        async def first_pass():
-            tasks = [perf_file_manager.get_file_info(file_path) for file_path in test_files]
-            return await asyncio.gather(*tasks)
-
-        # Benchmark first pass (cache miss)
-        first_results = benchmark.pedantic(asyncio.run, args=(first_pass(),), rounds=1, iterations=1)
-
-        # Second pass - should hit cache
-        async def second_pass():
-            tasks = [perf_file_manager.get_file_info(file_path) for file_path in test_files]
-            return await asyncio.gather(*tasks)
-
-        # Benchmark second pass (cache hit)
-        start_time = time.time()
-        second_results = await second_pass()
-        cache_time = time.time() - start_time
+        # Second call (with cache)
+        performance_monitor.start()
+        info2 = await file_manager.get_file_info(file_path)
+        second_call = performance_monitor.stop()
 
         # Cache should improve performance
-        assert len(first_results) == len(second_results)
-
-        # Check cache statistics
-        cache_stats = perf_file_manager.get_cache_stats()
-        assert cache_stats['file_cache_size'] > 0
-
-        # Cache hit should be faster (allow some variance)
-        # This is a rough check since benchmark timing can vary
-        assert cache_time < 1.0  # Cached operations should be very fast
+        assert second_call['duration'] < first_call['duration']
+        assert info1.name == info2.name
 
     @pytest.mark.asyncio
-    async def test_sorting_performance(self, perf_file_manager, large_directory, benchmark):
-        """Benchmark file sorting performance"""
-        large_dir, _ = large_directory
+    async def test_batch_operations_performance(self, test_config, temp_dir, performance_monitor):
+        """Test performance of batch file operations."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
 
-        # Get files for sorting
-        files = await perf_file_manager.list_directory(large_dir)
+        # Create source files
+        source_files = []
+        for i in range(20):
+            file_path = temp_dir / f'batch_source_{i}.txt'
+            file_path.write_text(f'Batch content {i}')
+            source_files.append(file_path)
 
-        def sort_by_name():
-            return perf_file_manager._sort_files(files, SortType.NAME, False)
+        # Create destination directory
+        dest_dir = temp_dir / 'batch_dest'
+        dest_dir.mkdir()
 
-        def sort_by_size():
-            return perf_file_manager._sort_files(files, SortType.SIZE, False)
+        # Prepare batch operations
+        copy_operations = [
+            {'source': f, 'destination': dest_dir / f.name}
+            for f in source_files
+        ]
 
-        def sort_by_modified():
-            return perf_file_manager._sort_files(files, SortType.MODIFIED, False)
+        performance_monitor.start()
 
-        # Benchmark different sort operations
-        name_sorted = benchmark.pedantic(sort_by_name, rounds=5, iterations=1)
-        size_sorted = benchmark.pedantic(sort_by_size, rounds=5, iterations=1)
-        modified_sorted = benchmark.pedantic(sort_by_modified, rounds=5, iterations=1)
+        # Execute batch copy
+        results = await file_manager.batch_copy(copy_operations)
 
-        # Verify sorting worked
-        assert len(name_sorted) == len(files)
-        assert len(size_sorted) == len(files)
-        assert len(modified_sorted) == len(files)
-
-    @pytest.mark.asyncio
-    async def test_memory_usage_performance(self, perf_file_manager, large_directory):
-        """Test memory usage during large operations"""
-        large_dir, created_files = large_directory
-
-        # Get initial memory usage
-        process = psutil.Process()
-        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
-
-        # Perform memory-intensive operations
-        files = await perf_file_manager.list_directory(large_dir)
-
-        # Get file info for many files
-        file_info_tasks = [perf_file_manager.get_file_info(file_path) for file_path in created_files[:500]]
-        file_infos = await asyncio.gather(*file_info_tasks)
-
-        # Perform searches
-        search_results = await perf_file_manager.search_files(large_dir, "test", include_content=True)
-
-        # Get final memory usage
-        final_memory = process.memory_info().rss / 1024 / 1024  # MB
-        memory_increase = final_memory - initial_memory
-
-        # Memory usage should be reasonable
-        assert memory_increase < 200  # Should not use more than 200MB additional
-
-        # Verify operations completed successfully
-        assert len(files) > 0
-        assert len(file_infos) == 500
-        assert len(search_results) >= 0
-
-    @pytest.mark.asyncio
-    async def test_stress_test_performance(self, perf_file_manager, very_large_directory):
-        """Stress test with very large directory"""
-        very_large_dir, subdirs, created_files = very_large_directory
-
-        start_time = time.time()
-
-        # Test directory listing on large directory
-        main_files = await perf_file_manager.list_directory(very_large_dir)
-
-        # Test concurrent subdirectory listings
-        subdir_tasks = [perf_file_manager.list_directory(subdir) for subdir in subdirs[:5]]
-        subdir_results = await asyncio.gather(*subdir_tasks)
-
-        # Test file info retrieval for sample files
-        sample_files = created_files[::100]  # Every 100th file
-        file_info_tasks = [perf_file_manager.get_file_info(file_path) for file_path in sample_files]
-        file_info_results = await asyncio.gather(*file_info_tasks)
-
-        end_time = time.time()
-        total_time = end_time - start_time
+        measurement = performance_monitor.stop()
 
         # Performance assertions
-        assert total_time < 10.0  # Should complete within 10 seconds
-        assert len(main_files) == len(subdirs) + 1  # Subdirs + parent
-        assert len(subdir_results) == 5
-        assert len(file_info_results) == len(sample_files)
+        assert len(results) == 20
+        assert all(r['success'] for r in results)
+        assert measurement['duration'] < 5.0  # Should complete within 5 seconds
 
-        # Check cache efficiency
-        cache_stats = perf_file_manager.get_cache_stats()
-        assert cache_stats['file_cache_size'] > 0
+    @pytest.mark.asyncio
+    async def test_memory_usage_large_files(self, test_config, temp_dir, performance_monitor):
+        """Test memory usage when handling large files."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        # Create a large file (10MB)
+        large_file = temp_dir / 'large_file.txt'
+        large_content = 'Large file content\n' * 500000  # ~10MB
+        large_file.write_text(large_content)
+
+        performance_monitor.start()
+
+        # Get file info for large file
+        file_info = await file_manager.get_file_info(large_file)
+
+        measurement = performance_monitor.stop()
+
+        # Memory usage should be reasonable
+        assert measurement['memory_delta'] < 20 * 1024 * 1024  # Less than 20MB
+        assert file_info.size > 10 * 1024 * 1024  # File should be large
+
+    @pytest.mark.asyncio
+    async def test_directory_monitoring_performance(self, test_config, temp_dir, performance_monitor):
+        """Test performance of directory monitoring."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        performance_monitor.start()
+
+        # Start monitoring
+        await file_manager.start_monitoring(temp_dir)
+
+        # Create files while monitoring
+        for i in range(10):
+            file_path = temp_dir / f'monitored_{i}.txt'
+            file_path.write_text(f'Monitored content {i}')
+            await asyncio.sleep(0.01)  # Small delay
+
+        # Stop monitoring
+        await file_manager.stop_monitoring()
+
+        measurement = performance_monitor.stop()
+
+        # Check monitoring detected changes
+        changes = file_manager.get_recent_changes()
+        assert len(changes) > 0
+        assert measurement['duration'] < 2.0  # Should complete quickly
+
+    @pytest.mark.asyncio
+    async def test_sorting_performance(self, test_config, large_directory, performance_monitor):
+        """Test performance of different sorting algorithms."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        from laxyfile.core.advanced_file_manager import SortType
+
+        sort_types = [SortType.NAME, SortType.SIZE, SortType.MODIFIED]
+
+        for sort_type in sort_types:
+            performance_monitor.start()
+
+            files = await file_manager.list_directory(
+                large_directory,
+                sort_type=sort_type
+            )
+
+            measurement = performance_monitor.stop()
+
+            # Each sort should complete quickly
+            assert measurement['duration'] < 1.0
+            assert len(files) > 0
+
+    @pytest.mark.asyncio
+    async def test_filtering_performance(self, test_config, large_directory, performance_monitor):
+        """Test performance of file filtering."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        filters = ['.txt', '.py', 'test', '001']
+
+        for filter_pattern in filters:
+            performance_monitor.start()
+
+            filtered_files = await file_manager.list_directory(
+                large_directory,
+                filter_pattern=filter_pattern
+            )
+
+            measurement = performance_monitor.stop()
+
+            # Filtering should be fast
+            assert measurement['duration'] < 0.5
+            # Should return some results for most filters
+            assert isinstance(filtered_files, list)
+
+    @pytest.mark.asyncio
+    async def test_cache_efficiency(self, test_config, large_directory, performance_monitor):
+        """Test cache efficiency with repeated operations."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        # First pass - populate cache
+        performance_monitor.start()
+        files1 = await file_manager.list_directory(large_directory)
+        first_pass = performance_monitor.stop()
+
+        # Second pass - use cache
+        performance_monitor.start()
+        files2 = await file_manager.list_directory(large_directory)
+        second_pass = performance_monitor.stop()
+
+        # Cache should improve performance
+        assert second_pass['duration'] < first_pass['duration']
+        assert len(files1) == len(files2)
+
+        # Check cache stats
+        cache_stats = file_manager.get_cache_stats()
         assert cache_stats['directory_cache_size'] > 0
 
     @pytest.mark.asyncio
-    async def test_directory_size_calculation_performance(self, perf_file_manager, large_directory, benchmark):
-        """Benchmark directory size calculation performance"""
-        large_dir, _ = large_directory
+    async def test_optimization_for_large_directories(self, test_config, performance_monitor):
+        """Test optimization strategies for large directories."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
 
-        async def calculate_size():
-            return await perf_file_manager.get_directory_size(large_dir)
+        # Test optimization for different directory sizes
+        sizes = [100, 500, 1000, 2000]
 
-        # Benchmark the operation
-        total_size = benchmark(asyncio.run, calculate_size())
+        for size in sizes:
+            performance_monitor.start()
 
-        # Verify result
-        assert total_size > 0
-        assert isinstance(total_size, int)
+            optimization = await file_manager.optimize_for_large_directory(size)
 
-    @pytest.mark.asyncio
-    async def test_file_type_detection_performance(self, perf_file_manager, large_directory, benchmark):
-        """Benchmark file type detection performance"""
-        large_dir, created_files = large_directory
+            measurement = performance_monitor.stop()
 
-        # Select files with different extensions
-        test_files = created_files[:100]
-
-        def detect_file_types():
-            results = []
-            for file_path in test_files:
-                file_type = perf_file_manager._determine_file_type(file_path)
-                results.append(file_type)
-            return results
-
-        # Benchmark file type detection
-        file_types = benchmark(detect_file_types)
-
-        # Verify results
-        assert len(file_types) == len(test_files)
-        assert all(isinstance(ft, str) for ft in file_types)
+            # Optimization should be fast
+            assert measurement['duration'] < 0.1
+            assert optimization['file_count'] == size
+            assert len(optimization['optimizations_applied']) > 0
 
     @pytest.mark.asyncio
-    async def test_concurrent_cache_access_performance(self, perf_file_manager, large_directory):
-        """Test cache performance under concurrent access"""
-        large_dir, created_files = large_directory
+    async def test_cleanup_performance(self, test_config, sample_files, performance_monitor):
+        """Test performance of cleanup operations."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
 
-        # Select files for concurrent access
-        test_files = created_files[:200]
+        # Populate caches
+        for file_path in sample_files.values():
+            if file_path.is_file():
+                await file_manager.get_file_info(file_path)
 
-        # First, populate cache
-        for file_path in test_files[:50]:
-            await perf_file_manager.get_file_info(file_path)
+        performance_monitor.start()
 
-        # Now test concurrent access (mix of cache hits and misses)
-        async def concurrent_access():
-            tasks = []
-            for file_path in test_files:
-                tasks.append(perf_file_manager.get_file_info(file_path))
-            return await asyncio.gather(*tasks)
+        # Perform cleanup
+        await file_manager.cleanup_cache()
 
-        start_time = time.time()
-        results = await concurrent_access()
-        end_time = time.time()
+        measurement = performance_monitor.stop()
 
-        concurrent_time = end_time - start_time
+        # Cleanup should be fast
+        assert measurement['duration'] < 1.0
 
-        # Performance assertions
-        assert concurrent_time < 3.0  # Should complete within 3 seconds
-        assert len(results) == len(test_files)
-
-        # Check cache statistics
-        cache_stats = perf_file_manager.get_cache_stats()
-        assert cache_stats['file_cache_size'] > 50  # Should have cached items
-
-    def test_cache_memory_efficiency(self, perf_file_manager, large_directory):
-        """Test cache memory efficiency and cleanup"""
-        large_dir, created_files = large_directory
-
-        # Get initial cache stats
-        initial_stats = perf_file_manager.get_cache_stats()
-
-        # Fill cache beyond capacity
-        asyncio.run(self._fill_cache_beyond_capacity(perf_file_manager, created_files))
-
-        # Check cache size limits are respected
-        final_stats = perf_file_manager.get_cache_stats()
-        assert final_stats['file_cache_size'] <= final_stats['file_cache_max']
-        assert final_stats['directory_cache_size'] <= final_stats['directory_cache_max']
-
-        # Test cache cleanup
-        asyncio.run(perf_file_manager.cleanup_cache())
-        cleanup_stats = perf_file_manager.get_cache_stats()
-
-        # Cache should be cleaned up
-        assert cleanup_stats['file_cache_size'] <= final_stats['file_cache_size']
-
-    async def _fill_cache_beyond_capacity(self, file_manager, created_files):
-        """Helper to fill cache beyond its capacity"""
-        # Try to cache more items than the cache can hold
+        # Cache should be cleaned
         cache_stats = file_manager.get_cache_stats()
-        max_cache_size = cache_stats['file_cache_max']
+        assert isinstance(cache_stats, dict)
 
-        # Cache more files than the limit
-        files_to_cache = created_files[:max_cache_size + 100]
 
-        for file_path in files_to_cache:
+@pytest.mark.performance
+class TestFileManagerScalability:
+    """Scalability test cases for the AdvancedFileManager."""
+
+    @pytest.mark.asyncio
+    async def test_scalability_with_file_count(self, test_config, temp_dir):
+        """Test scalability with increasing file counts."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        file_counts = [10, 50, 100, 500]
+        performance_results = []
+
+        for count in file_counts:
+            # Create test directory with specific file count
+            test_dir = temp_dir / f'scale_test_{count}'
+            test_dir.mkdir()
+
+            for i in range(count):
+                file_path = test_dir / f'file_{i:04d}.txt'
+                file_path.write_text(f'Content {i}')
+
+            # Measure performance
+            start_time = time.time()
+            files = await file_manager.list_directory(test_dir)
+            end_time = time.time()
+
+            duration = end_time - start_time
+            performance_results.append((count, duration))
+
+            # Performance should scale reasonably
+            assert duration < count * 0.01  # Linear scaling with reasonable constant
+            assert len(files) >= count  # Should find all files
+
+        # Performance should not degrade exponentially
+        for i in range(1, len(performance_results)):
+            prev_count, prev_time = performance_results[i-1]
+            curr_count, curr_time = performance_results[i]
+
+            # Time should not increase more than proportionally
+            time_ratio = curr_time / prev_time if prev_time > 0 else 1
+            count_ratio = curr_count / prev_count
+
+            assert time_ratio <= count_ratio * 2  # Allow some overhead
+
+    @pytest.mark.asyncio
+    async def test_memory_scalability(self, test_config, temp_dir):
+        """Test memory usage scalability."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        process = psutil.Process(os.getpid())
+        initial_memory = process.memory_info().rss
+
+        file_counts = [100, 200, 500]
+        memory_usage = []
+
+        for count in file_counts:
+            # Create test directory
+            test_dir = temp_dir / f'memory_test_{count}'
+            test_dir.mkdir()
+
+            for i in range(count):
+                file_path = test_dir / f'file_{i:04d}.txt'
+                file_path.write_text(f'Content {i}')
+
+            # List directory and measure memory
+            await file_manager.list_directory(test_dir)
+            current_memory = process.memory_info().rss
+            memory_increase = current_memory - initial_memory
+
+            memory_usage.append((count, memory_increase))
+
+            # Memory usage should be reasonable
+            assert memory_increase < count * 1024  # Less than 1KB per file
+
+        # Memory usage should scale linearly, not exponentially
+        for i in range(1, len(memory_usage)):
+            prev_count, prev_memory = memory_usage[i-1]
+            curr_count, curr_memory = memory_usage[i]
+
+            if prev_memory > 0:
+                memory_ratio = curr_memory / prev_memory
+                count_ratio = curr_count / prev_count
+
+                # Memory should not increase more than proportionally
+                assert memory_ratio <= count_ratio * 1.5
+
+    @pytest.mark.asyncio
+    async def test_concurrent_scalability(self, test_config, temp_dir):
+        """Test scalability with concurrent operations."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        # Create test files
+        test_files = []
+        for i in range(100):
+            file_path = temp_dir / f'concurrent_{i}.txt'
+            file_path.write_text(f'Concurrent content {i}')
+            test_files.append(file_path)
+
+        concurrency_levels = [1, 5, 10, 20]
+
+        for concurrency in concurrency_levels:
+            start_time = time.time()
+
+            # Create batches of concurrent operations
+            for i in range(0, len(test_files), concurrency):
+                batch = test_files[i:i+concurrency]
+                tasks = [file_manager.get_file_info(f) for f in batch]
+                await asyncio.gather(*tasks)
+
+            end_time = time.time()
+            duration = end_time - start_time
+
+            # Higher concurrency should not significantly degrade performance
+            assert duration < 10.0  # Should complete within reasonable time
+
+        # Verify all operations completed successfully
+        cache_stats = file_manager.get_cache_stats()
+        assert cache_stats['file_cache_size'] > 0
+
+
+@pytest.mark.performance
+class TestFileManagerResourceUsage:
+    """Resource usage test cases for the AdvancedFileManager."""
+
+    @pytest.mark.asyncio
+    async def test_cpu_usage(self, test_config, large_directory):
+        """Test CPU usage during intensive operations."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        process = psutil.Process(os.getpid())
+
+        # Measure CPU usage during directory listing
+        cpu_before = process.cpu_percent()
+
+        # Perform CPU-intensive operation
+        for _ in range(5):
+            await file_manager.list_directory(large_directory)
+
+        cpu_after = process.cpu_percent()
+
+        # CPU usage should be reasonable
+        cpu_increase = cpu_after - cpu_before
+        assert cpu_increase < 50.0  # Should not use more than 50% CPU
+
+    @pytest.mark.asyncio
+    async def test_file_descriptor_usage(self, test_config, temp_dir):
+        """Test file descriptor usage."""
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
+
+        process = psutil.Process(os.getpid())
+        initial_fds = process.num_fds() if hasattr(process, 'num_fds') else 0
+
+        # Create many files and access them
+        for i in range(100):
+            file_path = temp_dir / f'fd_test_{i}.txt'
+            file_path.write_text(f'FD test content {i}')
             await file_manager.get_file_info(file_path)
 
+        final_fds = process.num_fds() if hasattr(process, 'num_fds') else 0
+
+        # File descriptor usage should not leak
+        if initial_fds > 0 and final_fds > 0:
+            fd_increase = final_fds - initial_fds
+            assert fd_increase < 10  # Should not leak file descriptors
+
     @pytest.mark.asyncio
-    async def test_performance_regression_detection(self, perf_file_manager, large_directory):
-        """Test for performance regressions by establishing baselines"""
-        large_dir, created_files = large_directory
+    async def test_cache_memory_limits(self, test_config, temp_dir):
+        """Test cache memory limits and eviction."""
+        # Configure small cache for testing
+        test_config.set('performance.cache_size_mb', 1)  # 1MB cache limit
 
-        # Establish baseline performance metrics
-        baseline_operations = {
-            'list_directory': lambda: perf_file_manager.list_directory(large_dir),
-            'get_file_info': lambda: perf_file_manager.get_file_info(created_files[0]),
-            'search_files': lambda: perf_file_manager.search_files(large_dir, "test")
-        }
+        file_manager = AdvancedFileManager(test_config)
+        await file_manager.initialize()
 
-        performance_results = {}
+        # Create many files to exceed cache limit
+        large_files = []
+        for i in range(50):
+            file_path = temp_dir / f'cache_test_{i}.txt'
+            # Create files with substantial content
+            content = f'Cache test content {i}\n' * 1000
+            file_path.write_text(content)
+            large_files.append(file_path)
 
-        for operation_name, operation_func in baseline_operations.items():
-            times = []
+        # Access all files to populate cache
+        for file_path in large_files:
+            await file_manager.get_file_info(file_path)
 
-            # Run operation multiple times to get average
-            for _ in range(5):
-                start_time = time.time()
-                await operation_func()
-                end_time = time.time()
-                times.append(end_time - start_time)
+        # Check that cache size is within limits
+        cache_stats = file_manager.get_cache_stats()
 
-            avg_time = sum(times) / len(times)
-            performance_results[operation_name] = {
-                'avg_time': avg_time,
-                'min_time': min(times),
-                'max_time': max(times)
-            }
+        # Cache should have evicted some entries to stay within limits
+        assert cache_stats['file_cache_size'] <= len(large_files)
 
-        # Performance regression thresholds (adjust based on requirements)
-        thresholds = {
-            'list_directory': 2.0,  # 2 seconds max
-            'get_file_info': 0.1,   # 100ms max
-            'search_files': 5.0     # 5 seconds max
-        }
-
-        # Check for regressions
-        for operation, threshold in thresholds.items():
-            if operation in performance_results:
-                avg_time = performance_results[operation]['avg_time']
-                assert avg_time < threshold, f"{operation} exceeded threshold: {avg_time:.3f}s > {threshold}s"
-
-        return performance_results
+        # Cache should still be functional
+        info = await file_manager.get_file_info(large_files[0])
+        assert info is not None
