@@ -124,7 +124,7 @@ cookiecutter>=2.2.0
 jinja2>=3.1.0
 
 # Database (for testing)
-sqlite3  # Built-in, but listed for completeness
+# sqlite3 is built-in to Python, no need to install
 
 # Networking (for testing)
 aiohttp>=3.8.0
