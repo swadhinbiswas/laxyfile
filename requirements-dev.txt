@@ -132,7 +132,7 @@ httpserver>=1.1.0
 
 # File system testing
 pyfakefs>=5.2.0
-pytest-tmp-path>=0.1.0
+# pytest tmp_path fixture is built-in to pytest, no need to install
 
 # Parallel processing (for tests)
 joblib>=1.3.0
