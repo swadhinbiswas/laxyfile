@@ -18,6 +18,8 @@ import json
 
 from ..core.types import OperationResult
 from ..core.exceptions import PreviewError
+from ..core.file_manager_service import FileManagerService
+from ..core.error_handling_mixin import ErrorHandlingMixin
 from ..utils.logger import Logger
 from .terminal_media import terminal_image_renderer, terminal_video_renderer
 
@@ -384,13 +386,17 @@ class BinaryPreviewRenderer(BasePreviewRenderer):
             return self._create_error_result(file_path, str(e))
 
 
-class AdvancedPreviewSystem:
+class AdvancedPreviewSystem(ErrorHandlingMixin):
     """Advanced file preview system with multiple format support"""
 
     def __init__(self, config: Optional[PreviewConfig] = None):
+        super().__init__()
         self.config = config or PreviewConfig()
         self.logger = Logger()
         self.cache = PreviewCache() if self.config.cache_enabled else None
+
+        # Get file manager service
+        self.file_manager_service = FileManagerService.get_instance()
 
         # Initialize renderers
         self.renderers: List[BasePreviewRenderer] = []
@@ -423,6 +429,57 @@ class AdvancedPreviewSystem:
             self.logger.error(f"Failed to initialize AdvancedPreviewSystem: {e}")
             raise
 
+    def _safe_file_exists(self, file_path: Path) -> bool:
+        """Safely check if file exists using file manager service"""
+        try:
+            # Ensure file manager service is available
+            if not self.file_manager_service.ensure_initialized():
+                # Fallback to direct file system check
+                return file_path.exists()
+
+            # For file existence, we can use direct path check
+            # but we could also use file manager service for consistency
+            return file_path.exists() and file_path.is_file()
+
+        except Exception as e:
+            self.handle_file_manager_error(e, "_safe_file_exists")
+            return False
+
+    def _safe_get_file_info(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        """Safely get file information using file manager service"""
+        try:
+            # Ensure file manager service is available
+            if not self.file_manager_service.ensure_initialized():
+                # Fallback to direct file system access
+                try:
+                    stat = file_path.stat()
+                    return {
+                        'size': stat.st_size,
+                        'modified': stat.st_mtime,
+                        'is_file': file_path.is_file(),
+                        'is_dir': file_path.is_dir()
+                    }
+                except Exception:
+                    return None
+
+            # Use file manager service to get file info
+            # For now, fallback to direct access since file manager service
+            # doesn't have a specific get_file_info method
+            try:
+                stat = file_path.stat()
+                return {
+                    'size': stat.st_size,
+                    'modified': stat.st_mtime,
+                    'is_file': file_path.is_file(),
+                    'is_dir': file_path.is_dir()
+                }
+            except Exception:
+                return None
+
+        except Exception as e:
+            self.handle_file_manager_error(e, "_safe_get_file_info")
+            return None
+
     def _initialize_renderers(self):
         """Initialize preview renderers in priority order"""
         # Import here to avoid circular imports
@@ -443,13 +500,14 @@ class AdvancedPreviewSystem:
                              force_refresh: bool = False) -> PreviewResult:
         """Generate preview for a file"""
         try:
-            if not file_path.exists():
+            # Use safe file operation to check if file exists
+            if not self._safe_file_exists(file_path):
                 return PreviewResult(
                     file_path=file_path,
                     preview_type=PreviewType.UNKNOWN,
                     content="",
                     success=False,
-                    error_message="File does not exist"
+                    error_message="File does not exist or is not accessible"
                 )
 
             # Check cache first

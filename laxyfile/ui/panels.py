@@ -10,32 +10,56 @@ from rich.text import Text
 from rich.align import Align
 
 from ..core.file_manager import FileManager, FileInfo
+from ..core.file_manager_service import FileManagerService
+from ..core.error_handling_mixin import ErrorHandlingMixin
 from ..ui.theme import ThemeManager
 
-class PanelManager:
-    """Manages file browser panels"""
+class PanelManager(ErrorHandlingMixin):
+    """Manages file browser panels with robust error handling"""
 
     def __init__(self, theme_manager: ThemeManager):
+        super().__init__()
         self.theme_manager = theme_manager
-        self.file_manager = FileManager()
+        self.file_manager_service = FileManagerService.get_instance()
         self.current_selection: Dict[str, int] = {"left": 0, "right": 0}
         self.selected_files: Dict[str, Set[Path]] = {"left": set(), "right": set()}
         self.show_hidden = False
         self.current_paths: Dict[str, Path] = {}
 
-    def render_panel(self, path: Path, panel_name: str, is_active: bool = False) -> Panel:
-        """Render a file browser panel"""
-        try:
-            files = self.file_manager.list_directory(path, self.show_hidden)
+        # Ensure file manager is initialized
+        if not self.file_manager_service.ensure_initialized():
+            self.logger.warning("File manager service not available during PanelManager initialization")
 
+    def render_panel(self, path: Path, panel_name: str, is_active: bool = False) -> Panel:
+        """Render a file browser panel with robust error handling"""
+        try:
+            # Use safe file operation to get directory listing
+            files = self.safe_file_operation(
+                operation=lambda: self.file_manager_service.list_directory(path, self.show_hidden),
+                fallback_value=[],
+                cache_key=f"list_dir_{path}_{self.show_hidden}",
+                max_retries=2
+            )
+
+            # Handle empty directory or error case
             if not files:
-                empty_content = Align.center(
-                    Text("Empty directory", style=self.theme_manager.get_style("info"))
-                )
-                border_style = "bright_blue" if is_active else self.theme_manager.get_style("border")
+                # Check if this is an error case or truly empty directory
+                if not self.file_manager_service.is_healthy():
+                    error_content = Align.center(
+                        Text("File manager unavailable - Loading...", style="yellow")
+                    )
+                    border_style = "yellow"
+                    title = "⚠️ Loading..."
+                else:
+                    error_content = Align.center(
+                        Text("Empty directory", style="dim cyan")
+                    )
+                    border_style = "bright_blue" if is_active else self.theme_manager.get_style("border")
+                    title = f"📁 {path.name or str(path)}"
+
                 return Panel(
-                    empty_content,
-                    title=f"📁 {path.name or str(path)}",
+                    error_content,
+                    title=title,
                     border_style=border_style
                 )
 
@@ -58,6 +82,24 @@ class PanelManager:
                 self.current_selection[panel_name] = current_selection
 
             for i, file_info in enumerate(files):
+                # Handle different file info formats (dict vs FileInfo object)
+                if isinstance(file_info, dict):
+                    # Fallback format from error handling
+                    name = file_info.get('name', 'Unknown')
+                    is_dir = file_info.get('is_dir', False)
+                    size = file_info.get('size', 0)
+                    modified = file_info.get('modified', 0)
+                    file_path = file_info.get('path', path / name)
+                    file_type = file_info.get('file_type', 'unknown')
+                else:
+                    # Normal FileInfo object
+                    name = file_info.name
+                    is_dir = file_info.is_dir
+                    size = file_info.size
+                    modified = file_info.modified
+                    file_path = file_info.path
+                    file_type = getattr(file_info, 'file_type', 'unknown')
+
                 # Selection indicator
                 if i == current_selection and is_active:
                     selector = "▶"
@@ -65,33 +107,55 @@ class PanelManager:
                 elif i == current_selection:
                     selector = "►"
                     name_style = "bold white"
-                elif file_info.path in self.selected_files.get(panel_name, set()):
+                elif file_path in self.selected_files.get(panel_name, set()):
                     selector = "●"
                     name_style = "bold yellow"
                 else:
                     selector = " "
-                    name_style = self.theme_manager.get_file_style(file_info.file_type)
+                    name_style = self.theme_manager.get_file_style(file_type, False, False) if hasattr(self.theme_manager, 'get_file_style') else "white"
 
                 # Icon
-                icon = self.theme_manager.get_file_icon(
-                    file_info.file_type,
-                    file_info.is_dir
-                )
+                if hasattr(self.theme_manager, 'get_file_icon'):
+                    icon = self.theme_manager.get_file_icon(file_type, name, is_dir, False)
+                else:
+                    icon = "📁" if is_dir else "📄"
 
                 # Name with style
-                name_text = Text(file_info.name, style=name_style)
+                name_text = Text(name, style=name_style)
 
                 # Size
-                if file_info.is_dir:
+                if is_dir:
                     size_text = Text("<DIR>", style="dim cyan")
                 else:
-                    size_text = Text(file_info.get_size_formatted(), style="dim")
+                    # Format size
+                    if hasattr(file_info, 'get_size_formatted') and not isinstance(file_info, dict):
+                        size_text = Text(file_info.get_size_formatted(), style="dim")
+                    else:
+                        # Manual size formatting
+                        if size < 1024:
+                            size_str = f"{size}B"
+                        elif size < 1024 * 1024:
+                            size_str = f"{size/1024:.1f}K"
+                        elif size < 1024 * 1024 * 1024:
+                            size_str = f"{size/(1024*1024):.1f}M"
+                        else:
+                            size_str = f"{size/(1024*1024*1024):.1f}G"
+                        size_text = Text(size_str, style="dim")
 
                 # Modified time
-                modified_text = Text(
-                    file_info.get_modified_formatted(),
-                    style="dim"
-                )
+                if hasattr(file_info, 'get_modified_formatted') and not isinstance(file_info, dict):
+                    modified_text = Text(file_info.get_modified_formatted(), style="dim")
+                else:
+                    # Manual time formatting
+                    try:
+                        import time as time_module
+                        if isinstance(modified, (int, float)):
+                            modified_str = time_module.strftime("%m/%d %H:%M", time_module.localtime(modified))
+                        else:
+                            modified_str = str(modified)[:16] if modified else "??/??"
+                    except:
+                        modified_str = "??/??"
+                    modified_text = Text(modified_str, style="dim")
 
                 table.add_row(
                     selector,
@@ -119,13 +183,14 @@ class PanelManager:
             )
 
         except Exception as e:
+            self.handle_file_manager_error(e, "render_panel")
             error_content = Align.center(
-                Text(f"Error: {str(e)}", style=self.theme_manager.get_style("error"))
+                Text(f"Panel Error: {str(e)}", style="red")
             )
             return Panel(
                 error_content,
                 title=f"❌ Error",
-                border_style=self.theme_manager.get_style("error")
+                border_style="red"
             )
 
     def navigate_up(self, panel_name: str):

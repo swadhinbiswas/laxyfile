@@ -1,5 +1,11 @@
 # 🚀 LaxyFile - Advanced Terminal File Manager
 
+[![Tests](https://github.com/swadhinbiswas/laxyfile/actions/workflows/test.yml/badge.svg)](https://github.com/swadhinbiswas/laxyfile/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/swadhinbiswas/laxyfile/branch/main/graph/badge.svg)](https://codecov.io/gh/swadhinbiswas/laxyfile)
+[![PyPI version](https://badge.fury.io/py/laxyfile.svg)](https://badge.fury.io/py/laxyfile)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **A beautiful, AI-powered terminal file manager inspired by Superfile with advanced media support and intelligent automation**
 
 ## ✨ Features

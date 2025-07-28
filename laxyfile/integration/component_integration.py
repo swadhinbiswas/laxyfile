@@ -169,6 +169,13 @@ class ComponentIntegrator:
     async def _initialize_preview_system(self) -> bool:
         """Initialize preview system"""
         try:
+            # Ensure file manager service is available first
+            from ..core.file_manager_service import FileManagerService
+            file_manager_service = FileManagerService.get_instance()
+
+            if not file_manager_service.ensure_initialized():
+                self.logger.warning("File manager service not available during preview system initialization")
+
             # Create preview config from main config
             from ..preview.preview_system import PreviewConfig
             preview_config = PreviewConfig()
@@ -189,7 +196,7 @@ class ComponentIntegrator:
                 initialized=True,
                 healthy=True,
                 last_check=time.time(),
-                dependencies=['config']
+                dependencies=['config', 'file_manager']
             )
             return True
         except Exception as e:

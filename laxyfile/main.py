@@ -34,6 +34,9 @@ from rich.style import Style
 
 from .core.file_manager import FileManager
 from .core.config import Config
+from .core.component_initializer import ComponentInitializer
+from .core.file_manager_service import FileManagerService
+from .core.error_handling_mixin import ErrorHandlingMixin
 from .core.performance_optimizer import PerformanceOptimizer, PerformanceConfig
 from .core.startup_optimizer import StartupOptimizer, StartupConfig
 from .ui.theme import ThemeManager
@@ -153,10 +156,13 @@ class KeyHandler:
             pass
         return None
 
-class LaxyFileApp:
-    """Modern file manager with Superfile-like interface"""
+class LaxyFileApp(ErrorHandlingMixin):
+    """Modern file manager with Superfile-like interface and robust error handling"""
 
     def __init__(self):
+        # Initialize error handling mixin first
+        super().__init__()
+
         # Initialize console with optimized settings for performance
         self.console = Console(
             force_terminal=True,
@@ -170,22 +176,38 @@ class LaxyFileApp:
             _environ=os.environ  # Cache environment for performance
         )
 
-        # Core components - lazy initialization for faster startup
+        # Core configuration
         self.config = Config()
-        self.theme_manager = None  # Lazy init
-        self.file_manager = None   # Lazy init
-        self.panel_manager = None  # Lazy init
-        self.media_viewer = None   # Lazy init
-        self.ai_assistant = None   # Lazy init
+
+        # Initialize component initializer for proper startup sequence
+        self.component_initializer = ComponentInitializer(self.config)
+
+        # Initialize core services first
+        if not self.component_initializer.initialize_core_services():
+            self.logger.error("Failed to initialize core services")
+            # Continue with degraded functionality
+
+        # Core components - will be properly initialized by ComponentInitializer
+        self.theme_manager = None
+        self.file_manager_service = FileManagerService.get_instance()
+        self.panel_manager = None
+        self.media_viewer = None
+        self.ai_assistant = None
 
         # Initialize navigation performance systems
         self.navigation_throttle = NavigationThrottle()
         self.fast_nav_manager = FastNavigationManager()
         self.keyboard_debouncer = KeyboardDebouncer()
 
+        # Display optimization
+        self._display_dirty = False
+        self._last_navigation_time = 0
+        self._navigation_debounce_delay = 0.05  # 50ms debounce
+        self._cached_file_lists = {}
+        self._cache_expiry = 2.0  # Cache for 2 seconds
+
         # Initialize hotkey manager
         self.hotkey_manager = HotkeyManager()
-        self.logger = Logger()
 
         # Performance optimizations
         self._component_cache = {}
@@ -214,12 +236,21 @@ class LaxyFileApp:
         if self.config.config.remember_session:
             self._restore_session()
 
+        # Initialize UI components after core services
+        if not self.component_initializer.initialize_ui_components():
+            self.logger.warning("Some UI components failed to initialize")
+            # Continue with available components
+
         # Setup layout
         self.layout = self.create_layout()
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+
+        # Mark startup as complete
+        self._startup_complete = True
+        self.logger.info("LaxyFile application initialized successfully")
 
     def _get_theme_manager(self):
         """Lazy initialization of theme manager"""
@@ -229,11 +260,21 @@ class LaxyFileApp:
         return self.theme_manager
 
     def _get_file_manager(self):
-        """Lazy initialization of file manager"""
-        if self.file_manager is None:
-            self.file_manager = FileManager()
-            self._component_cache['file_manager'] = self.file_manager
-        return self.file_manager
+        """Get file manager through the service"""
+        # Use the file manager service instead of direct instantiation
+        file_manager = self.file_manager_service.get_file_manager()
+        if file_manager is None:
+            self.logger.error("File manager not available from service")
+            # Return a fallback or handle gracefully
+            return None
+
+        self._component_cache['file_manager'] = file_manager
+        return file_manager
+
+    @property
+    def file_manager(self):
+        """Property to access file manager through service with error handling"""
+        return self._get_file_manager()
 
     def _get_panel_manager(self):
         """Lazy initialization of panel manager"""
@@ -298,6 +339,44 @@ class LaxyFileApp:
             self.animation_optimizer = AnimationOptimizer(anim_config)
             self._component_cache['animation_optimizer'] = self.animation_optimizer
         return self.animation_optimizer
+
+    def _get_cached_file_list(self, panel_name: str) -> List[Any]:
+        """Get cached file list to prevent excessive directory reads during navigation"""
+        current_path = self.current_path[panel_name]
+        cache_key = f"{panel_name}_{current_path}_{self._get_panel_manager().show_hidden}"
+        current_time = time.time()
+
+        # Check if we have a valid cached result
+        if cache_key in self._cached_file_lists:
+            cached_data = self._cached_file_lists[cache_key]
+            if current_time - cached_data['timestamp'] < self._cache_expiry:
+                return cached_data['files']
+
+        # Cache miss or expired - get fresh file list
+        files = self.safe_file_operation(
+            operation=lambda: self.file_manager_service.list_directory(
+                current_path,
+                self._get_panel_manager().show_hidden
+            ),
+            fallback_value=[],
+            cache_key=f"cached_list_{cache_key}",
+            max_retries=1
+        )
+
+        # Cache the result
+        self._cached_file_lists[cache_key] = {
+            'files': files,
+            'timestamp': current_time
+        }
+
+        # Limit cache size to prevent memory issues
+        if len(self._cached_file_lists) > 10:
+            # Remove oldest entries
+            oldest_key = min(self._cached_file_lists.keys(),
+                           key=lambda k: self._cached_file_lists[k]['timestamp'])
+            del self._cached_file_lists[oldest_key]
+
+        return files
 
     def _complete_startup(self):
         """Complete startup initialization after first use"""
@@ -430,7 +509,13 @@ class LaxyFileApp:
     def create_file_panel(self, panel_name: str, path: Path, is_active: bool) -> Panel:
         """Create beautiful file panel with modern styling"""
         try:
-            files = self.file_manager.list_directory(path, self.panel_manager.show_hidden)
+            # Use safe file operation to get directory listing
+            files = self.safe_file_operation(
+                operation=lambda: self.file_manager_service.list_directory(path, self._get_panel_manager().show_hidden),
+                fallback_value=[],
+                cache_key=f"panel_{panel_name}_{path}",
+                max_retries=2
+            )
             current_selection = self.panel_manager.current_selection.get(panel_name, 0)
             selected_files = self.panel_manager.selected_files.get(panel_name, set())
 
@@ -616,9 +701,15 @@ class LaxyFileApp:
     def create_preview_panel(self) -> Panel:
         """Create preview panel for current file"""
         try:
-            files = self.file_manager.list_directory(
-                self.current_path[self.active_panel],
-                self.panel_manager.show_hidden
+            # Use safe file operation to get directory listing
+            files = self.safe_file_operation(
+                operation=lambda: self.file_manager_service.list_directory(
+                    self.current_path[self.active_panel],
+                    self._get_panel_manager().show_hidden
+                ),
+                fallback_value=[],
+                cache_key=f"preview_{self.active_panel}_{self.current_path[self.active_panel]}",
+                max_retries=1
             )
             current_file = self.panel_manager.get_current_file(self.active_panel, files)
 
@@ -635,7 +726,15 @@ class LaxyFileApp:
 
             # Use media viewer for preview with even larger dimensions for better quality
             self.logger.debug(f"Creating preview for: {current_file.path}")
-            return self.media_viewer.create_preview_panel(current_file.path, 60, 40)
+            media_viewer = self._get_media_viewer()
+            if media_viewer is None:
+                return Panel(
+                    Align.center(Text("Media viewer unavailable", style="yellow")),
+                    title="⚠️ Preview Unavailable",
+                    border_style="yellow",
+                    box=ROUNDED
+                )
+            return media_viewer.create_preview_panel(current_file.path, 60, 40)
 
         except Exception as e:
             self.logger.error(f"Preview panel creation error: {e}")
@@ -649,14 +748,24 @@ class LaxyFileApp:
     def create_footer(self) -> Panel:
         """Create modern footer with status and shortcuts"""
         try:
-            # Status information
-            left_files = self.file_manager.list_directory(
-                self.current_path["left"],
-                self.panel_manager.show_hidden
+            # Status information using safe file operations
+            left_files = self.safe_file_operation(
+                operation=lambda: self.file_manager_service.list_directory(
+                    self.current_path["left"],
+                    self._get_panel_manager().show_hidden
+                ),
+                fallback_value=[],
+                cache_key=f"footer_left_{self.current_path['left']}",
+                max_retries=1
             )
-            right_files = self.file_manager.list_directory(
-                self.current_path["right"],
-                self.panel_manager.show_hidden
+            right_files = self.safe_file_operation(
+                operation=lambda: self.file_manager_service.list_directory(
+                    self.current_path["right"],
+                    self._get_panel_manager().show_hidden
+                ),
+                fallback_value=[],
+                cache_key=f"footer_right_{self.current_path['right']}",
+                max_retries=1
             )
 
             left_selected = len(self.panel_manager.selected_files.get("left", set()))
@@ -794,21 +903,18 @@ class LaxyFileApp:
         try:
             hotkeys = self.config.get_hotkeys()
 
-            # Ultra-fast navigation - process instantly without caching delays
+            # Optimized navigation with caching to prevent flicker
             # WASD Navigation (as requested)
             if key in ['s', 'S', 'j', 'J', 'DOWN']:
-                # Down navigation - instant processing
-                files = self.file_manager.list_directory(
-                    self.current_path[self.active_panel],
-                    self.panel_manager.show_hidden
-                )
+                # Down navigation - use cached file list to prevent flicker
+                files = self._get_cached_file_list(self.active_panel)
                 self.panel_manager.navigate_down(self.active_panel, len(files))
-                # Force immediate display update for ultra-fast response
-
+                self._display_dirty = True
 
             elif key in ['w', 'W', 'k', 'K', 'UP']:
-                # Up navigation - instant processing
+                # Up navigation - instant processing without file system calls
                 self.panel_manager.navigate_up(self.active_panel)
+                self._display_dirty = True
 
 
             elif key in ['a', 'A', 'h', 'H', 'LEFT']:
@@ -833,8 +939,9 @@ class LaxyFileApp:
 
 
             elif key in ['G']:
-                files = self.file_manager.list_directory(self.current_path[self.active_panel], self.panel_manager.show_hidden)
+                files = self._get_cached_file_list(self.active_panel)
                 self.panel_manager.navigate_to_bottom(self.active_panel, len(files))
+                self._display_dirty = True
 
 
             elif key == 'PAGE_UP':
@@ -843,9 +950,10 @@ class LaxyFileApp:
 
 
             elif key == 'PAGE_DOWN':
-                # Page down navigation - jump by 10 items
-                files = self.file_manager.list_directory(self.current_path[self.active_panel], self.panel_manager.show_hidden)
+                # Page down navigation - jump by 10 items using cached file list
+                files = self._get_cached_file_list(self.active_panel)
                 self.panel_manager.navigate_page_down(self.active_panel, len(files), 10)
+                self._display_dirty = True
 
             # File operations - reassigned since WASD are now navigation
             elif key in ['c', 'C']:
@@ -863,8 +971,9 @@ class LaxyFileApp:
             elif key in ['e', 'E']:
                 self.handle_edit()
             elif key in ['z', 'Z']:  # New key for select all since 'a' is now left
-                files = self.file_manager.list_directory(self.current_path[self.active_panel], self.panel_manager.show_hidden)
+                files = self._get_cached_file_list(self.active_panel)
                 self.panel_manager.select_all(self.active_panel, files)
+                self._display_dirty = True
 
             # Quick navigation
             elif key == '~':
@@ -1259,9 +1368,13 @@ Enter your choice (0-9):"""
 
             if current_file and current_file.is_file:
                 # Use media viewer for full-screen display
-                panel = self.media_viewer.display_file(current_file.path, 100, 40)
-                self.console.print(panel)
-                self.console.input("[dim cyan]Press Enter to continue...[/dim cyan]")
+                media_viewer = self._get_media_viewer()
+                if media_viewer is not None:
+                    panel = media_viewer.display_file(current_file.path, 100, 40)
+                    self.console.print(panel)
+                    self.console.input("[dim cyan]Press Enter to continue...[/dim cyan]")
+                else:
+                    self.show_message("❌ Media viewer unavailable", "red")
 
         except Exception as e:
             self.show_message(f"❌ View error: {e}", "red")
@@ -1388,39 +1501,52 @@ Set OPENROUTER_API_KEY environment variable to enable AI features.
             pass
 
     async def _async_run(self):
-        """Ultra-fast async main application loop optimized for navigation with stable display"""
+        """Optimized async main application loop with anti-flicker navigation"""
         try:
-            # Initial display setup - populate panels before starting main loop
-            self.update_display_immediately()
-
-
+            # Initial display setup
+            self.update_display()
 
             with Live(
                 self.layout,
                 console=self.console,
                 screen=True,
-                refresh_per_second=60,  # Reduced from 120 to prevent window jumping
+                refresh_per_second=30,  # Reduced to 30 FPS to prevent flicker
                 auto_refresh=False
             ) as live:
 
+                last_key_time = 0
+                pending_refresh = False
+
                 while self.running:
-                    # Handle input first for maximum responsiveness
+                    current_time = time.time()
                     key = self.key_handler.get_key_input()
+
                     if key:
-                        # Process the key without showing it on screen
+                        # Process the key
                         await self.handle_key(key)
+                        last_key_time = current_time
+                        pending_refresh = True
 
-                        # Update display content
-                        self.update_display()
+                        # For navigation keys, use debounced update to prevent flicker
+                        if key in ['UP', 'DOWN', 'w', 'W', 's', 'S', 'k', 'K', 'j', 'J']:
+                            # Mark display as dirty but don't refresh immediately
+                            self._display_dirty = True
+                        else:
+                            # For non-navigation keys, update immediately
+                            self.update_display()
+                            live.refresh()
+                            pending_refresh = False
 
-                        # Single refresh after key processing to prevent flicker
+                    # Debounced refresh for navigation keys to prevent flicker
+                    if pending_refresh and (current_time - last_key_time) > 0.05:  # 50ms debounce
+                        if self._display_dirty:
+                            self.update_display()
+                            self._display_dirty = False
                         live.refresh()
+                        pending_refresh = False
 
-                        # Slightly longer delay to prevent excessive refreshing
-                        await asyncio.sleep(0.016)  # ~60 FPS to match refresh rate
-                    else:
-                        # No input - minimal delay without refresh to prevent jumping
-                        await asyncio.sleep(0.016)
+                    # Minimal sleep to prevent CPU spinning
+                    await asyncio.sleep(0.01)  # 10ms sleep
 
         except KeyboardInterrupt:
             self.quit()

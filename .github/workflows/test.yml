@@ -41,15 +41,21 @@ jobs:
 
       - name: Test with pytest
         run: |
-          python -m pytest tests/ -v --cov=laxyfile --cov-report=xml --cov-report=term-missing
+          python -m pytest tests/ -v --cov=laxyfile --cov-report=xml --cov-report=term-missing --cov-report=html
+        env:
+          COVERAGE_FILE: .coverage.${{ matrix.os }}.${{ matrix.python-version }}
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
+          flags: unittests,${{ matrix.os }},python${{ matrix.python-version }}
+          name: codecov-${{ matrix.os }}-py${{ matrix.python-version }}
           fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   security-scan:
     runs-on: ubuntu-latest

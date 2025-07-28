@@ -20,17 +20,23 @@ from rich.console import Console
 
 from ..core.types import PanelData, EnhancedFileInfo, SortType
 from ..core.interfaces import UIManagerInterface
+from ..core.file_manager_service import FileManagerService
+from ..core.error_handling_mixin import ErrorHandlingMixin
 from .theme import ThemeManager
 from ..utils.logger import Logger
 
 
-class EnhancedPanelRenderer:
+class EnhancedPanelRenderer(ErrorHandlingMixin):
     """Enhanced panel rendering with advanced visual features"""
 
     def __init__(self, theme_manager: ThemeManager, console: Console):
+        super().__init__()
         self.theme_manager = theme_manager
         self.console = console
         self.logger = Logger()
+
+        # Get file manager service
+        self.file_manager_service = FileManagerService.get_instance()
 
         # Visual settings
         self.show_file_icons = True
@@ -431,7 +437,7 @@ class EnhancedPanelRenderer:
 
     def render_preview_panel(self, file_path: Optional[Path], content: str = "",
                            preview_type: str = "none") -> Panel:
-        """Render preview panel with file content"""
+        """Render preview panel with file content using safe file operations"""
         try:
             theme = self.theme_manager.get_current_theme()
 
@@ -440,6 +446,15 @@ class EnhancedPanelRenderer:
                     Align.center(Text("No preview available", style="dim")),
                     title="👁️ Preview",
                     border_style=theme.get('preview_border', 'dim'),
+                    box=ROUNDED
+                )
+
+            # Check if file manager service is available
+            if not self.file_manager_service.ensure_initialized():
+                return Panel(
+                    Align.center(Text("Preview unavailable - File manager loading...", style="yellow")),
+                    title="⚠️ Loading Preview",
+                    border_style="yellow",
                     box=ROUNDED
                 )
 

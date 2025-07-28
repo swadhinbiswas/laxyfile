@@ -1,0 +1,119 @@
+# Codecov configuration for LaxyFile
+# https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 1%
+        base: auto
+        branches:
+          - main
+          - develop
+    patch:
+      default:
+        target: 75%
+        threshold: 2%
+
+  ignore:
+    - "tests/"
+    - "docs/"
+    - "scripts/"
+    - "packaging/"
+    - "build/"
+    - "dist/"
+    - "*.egg-info/"
+    - "setup.py"
+    - "conftest.py"
+    - "**/__pycache__/"
+    - "**/*.pyc"
+    - "**/test_*.py"
+    - "laxyfile/__main__.py" # Entry point, hard to test
+    - "laxyfile/main.py" # Main CLI, integration tested
+
+comment:
+  layout: "reach,diff,flags,tree,footer"
+  behavior: default
+  require_changes: false
+  require_base: no
+  require_head: yes
+
+github_checks:
+  annotations: true
+
+flags:
+  unittests:
+    paths:
+      - laxyfile/
+    carryforward: true
+  integration:
+    paths:
+      - laxyfile/
+    carryforward: true
+  performance:
+    paths:
+      - laxyfile/
+    carryforward: false
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: 80%
+      - type: patch
+        target: 75%
+  individual_components:
+    - component_id: core
+      name: Core Components
+      paths:
+        - laxyfile/core/
+      statuses:
+        - type: project
+          target: 85%
+    - component_id: ui
+      name: UI Components
+      paths:
+        - laxyfile/ui/
+      statuses:
+        - type: project
+          target: 75%
+    - component_id: ai
+      name: AI Components
+      paths:
+        - laxyfile/ai/
+      statuses:
+        - type: project
+          target: 80%
+    - component_id: operations
+      name: File Operations
+      paths:
+        - laxyfile/operations/
+      statuses:
+        - type: project
+          target: 85%
+    - component_id: preview
+      name: Preview System
+      paths:
+        - laxyfile/preview/
+      statuses:
+        - type: project
+          target: 75%
+    - component_id: plugins
+      name: Plugin System
+      paths:
+        - laxyfile/plugins/
+      statuses:
+        - type: project
+          target: 80%
+    - component_id: utils
+      name: Utilities
+      paths:
+        - laxyfile/utils/
+      statuses:
+        - type: project
+          target: 85%
